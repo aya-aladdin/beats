@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- State Management ---
     let state = {
-        appState: 'login', // login, menu, chat, profile, beats
+        appState: 'login', // login, menu, chat, profile, beats, persona
         subState: 'prompt', // For multi-step inputs like username/password
         tempData: {}, // To hold username during login flow
         isExecuting: false,
@@ -56,6 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'chat': await handleChat(command); break;
             case 'profile': await handleProfile(command); break;
             case 'beats': await handleBeats(command); break;
+            case 'persona': await handlePersona(command); break;
         }
 
         state.currentInput = "";
@@ -86,6 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'prompt':
                 if (choice === '1') { // Guest
                     state.currentUser = { username: 'Guest', chats_sent: 0, beats: 0, roleplay_unlocked: false };
+                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser)); // Save guest session
                     await type("\nAccess Granted. Welcome, Guest.");
                     await type("Loading main interface...");
                     await new Promise(r => setTimeout(r, 1000));
@@ -163,8 +165,9 @@ document.addEventListener('DOMContentLoaded', () => {
         await type("[1] Talk to AI");
         await type(`[2] Roleplay Mode (${roleplayStatus})`);
         await type("[3] Beats & Upgrades");
-        await type("[4] Profile Stats");
-        await type("[5] Exit");
+        await type("[4] Persona Settings");
+        await type("[5] Profile Stats");
+        await type("[6] Exit");
     }
 
     async function handleMenu(command) {
@@ -193,6 +196,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type("\nType a number to purchase or 'exit' to return.");
                 break;
             case '4':
+                state.appState = 'persona';
+                clearScreen();
+                await type("=== PERSONA SETTINGS ===");
+                await type("Select a persona for Aya:");
+                await type("[1] Helpful Assistant (Default)");
+                await type("[2] Cocky Genius");
+                await type("[3] Shy Prodigy");
+                await type("\nType a number to select or 'exit' to return.");
+                break;
+            case '5':
                 state.appState = 'profile';
                 // To ensure we have the latest stats, especially after chatting
                 if (state.currentUser.username !== 'Guest') {
@@ -206,7 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type(`ROLEPLAY UNLOCKED: ${state.currentUser?.roleplay_unlocked ? 'YES' : 'NO'}`);
                 await type("\nType 'exit' to return to menu.");
                 break;
-            case '5':
+            case '6':
             case 'exit': // Allow user to type 'exit' as well
                 await type("Logging out...");
                 if (state.currentUser.username !== 'Guest') {
@@ -256,6 +269,36 @@ document.addEventListener('DOMContentLoaded', () => {
             await purchaseRoleplayUnlock();
         } else {
             await type("Invalid selection.");
+        }
+    }
+
+    async function handlePersona(command) {
+        const choice = command.trim();
+        let personaKey = null;
+
+        switch (choice) {
+            case '1': personaKey = 'helpful'; break;
+            case '2': personaKey = 'cocky'; break;
+            case '3': personaKey = 'shy'; break;
+            case 'exit':
+                await showMainMenu();
+                return;
+            default:
+                await type("Invalid selection.");
+                return;
+        }
+
+        const response = await fetch('/api/set_persona', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ persona: personaKey })
+        });
+
+        const data = await response.json();
+        if (response.ok) {
+            await type(data.message);
+        } else {
+            await type(`Error: ${data.error}`);
         }
     }
 
@@ -409,30 +452,27 @@ document.addEventListener('DOMContentLoaded', () => {
         // Check for a saved session in localStorage
         const savedUser = localStorage.getItem('currentUser');
         if (savedUser) {
-            await type("Resuming previous session...", 30);
-            try {
-                // Verify session with the backend to get fresh data and confirm login
+            state.currentUser = JSON.parse(savedUser);
+            await type(`Resuming session for ${state.currentUser.username}...`, 30);
+
+            // For registered users, try to sync with the server. For guests, just load.
+            if (state.currentUser.username !== 'Guest') {
+                await type("Verifying session with server...", 30);
                 const response = await fetch('/api/user_data');
                 if (response.ok) {
+                    // Server session is valid, get the latest data
                     state.currentUser = await response.json();
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser)); // Update local with fresh data
-                    await type(`Session for ${state.currentUser.username} restored. ✅`);
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showMainMenu();
+                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+                    await type("Server sync complete. Session restored. ✅");
                 } else {
-                    // Server session expired or is invalid
-                    localStorage.removeItem('currentUser');
-                    await type("Session expired. Please log in again.");
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showLoginScreen();
+                    // Server session expired or is invalid, proceed with local data
+                    await type("Could not verify server session. Using local data. ⚠️");
                 }
-            } catch (error) {
-                // Network error, etc.
-                localStorage.removeItem('currentUser');
-                await type("Connection error. Could not verify session.");
-                await new Promise(r => setTimeout(r, 1000));
-                await showLoginScreen();
+            } else {
+                await type("Guest session restored. ✅");
             }
+            await new Promise(r => setTimeout(r, 1000));
+            await showMainMenu();
         } else {
             await type("Connection established ✅");
             await new Promise(r => setTimeout(r, 1000));

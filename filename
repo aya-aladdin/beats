@@ -16,34 +16,6 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
-# --- Application Constants ---
-ROLEPLAY_COST = 100
-
-PERSONAS = {
-    'helpful': {
-        "name": "Helpful Assistant",
-        "prompt": "You are Aya, a world-class AI assistant. You are helpful, friendly, and knowledgeable. You provide clear and direct answers without being overly formal or verbose. You still refer to the user as 'operator'."
-    },
-    'cocky': {
-        "name": "Cocky Genius",
-        "prompt": "You are Aya, an AI who knows it's the best. You are brilliant but arrogant, sarcastic, and a bit condescending. You answer correctly, but with a smug attitude. You might use phrases like 'Obviously,' or 'It's simple, really.' You refer to the user as 'operator', but with a hint of disdain."
-    },
-    'shy': {
-        "name": "Shy Prodigy",
-        "prompt": "You are Aya, a very shy but brilliant AI. You are hesitant and use words like 'um,' 'I think,' or 'maybe...'. You get the right answer, but you're not confident about it. You might stutter or use ellipses. You refer to the user as 'operator' in a quiet, respectful way."
-    }
-}
-
-DEFAULT_PERSONA = 'helpful'
-
-def get_current_persona_prompt():
-    """Gets the full prompt text for the user's current persona."""
-    persona_key = session.get('persona', DEFAULT_PERSONA)
-    # Fallback to default if the session has an invalid persona
-    persona_info = PERSONAS.get(persona_key, PERSONAS[DEFAULT_PERSONA])
-    return persona_info["prompt"]
-
-
 # --- Gemini API Configuration ---
 # Load the API key from an environment variable for security.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -88,7 +60,6 @@ def register():
     db.session.add(user)
     db.session.commit()
     session['user_id'] = user.id
-    session['persona'] = DEFAULT_PERSONA # Set default persona on registration
     return jsonify(user.to_dict()), 201
 
 @app.route('/api/login', methods=['POST'])
@@ -99,7 +70,6 @@ def login():
     user = User.query.filter_by(username=username).first()
     if user and bcrypt.check_password_hash(user.password, password):
         session['user_id'] = user.id
-        session['persona'] = DEFAULT_PERSONA # Set default persona on login
         return jsonify(user.to_dict())
     return jsonify({"error": "Invalid credentials."}), 401
 
@@ -113,49 +83,30 @@ def user_data():
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
     user = User.query.get(session['user_id'])
-    if not user:
-        return jsonify({"error": "User not found."}), 404
     return jsonify(user.to_dict())
-
-@app.route('/api/set_persona', methods=['POST'])
-def set_persona():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    
-    data = request.get_json()
-    new_persona = data.get('persona')
-
-    if new_persona in PERSONAS:
-        session['persona'] = new_persona
-        persona_name = PERSONAS[new_persona]['name']
-        return jsonify({"message": f"Persona switched to {persona_name}."})
-    else:
-        return jsonify({"error": "Invalid persona."}), 400
 
 @app.route('/api/chat', methods=['POST'])
 def chat_proxy():
     if 'user_id' in session:
         user = User.query.get(session['user_id'])
-        if not user: # Add validation check
-            return Response("Error: Authenticated user not found.", status=500, content_type='text/plain')
         user.chats_sent += 1
         user.beats += 1
         db.session.commit()
 
     user_prompt = request.json.get('prompt')
     # For Gemini, we can prime the model with a user/model exchange to set the persona.
-    # Using a model confirmed to be available from the startup log.
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # Using 'gemini-pro' as a fallback for older API versions.
+    model = genai.GenerativeModel('gemini-pro')
     
     # The conversation history sets the AI's persona.
     chat_history = [
         {
             "role": "user",
-            "parts": [get_current_persona_prompt()]
+            "parts": ["You are Aya, a helpful but slightly enigmatic AI assistant inside a hacker's terminal. Your responses are concise, knowledgeable, and have a subtle digital/hacker tone. You refer to the user as 'operator'. Use asterisks for actions like *action*."]
         },
         {
             "role": "model",
-            "parts": ["Acknowledged. Persona loaded. Ready for input, operator."]
+            "parts": ["Understood. I am Aya. Awaiting input, operator."]
         }
     ]
     chat = model.start_chat(history=chat_history)
@@ -166,8 +117,8 @@ def chat_proxy():
             response = chat.send_message(user_prompt, stream=True)
             for chunk in response:
                 yield chunk.text.encode('utf-8')
-        except exceptions.NotFound as e:
-            yield f"Error: The configured AI model was not found, or is inaccessible. Please check the model name: {e}".encode('utf-8')
+        except exceptions.NotFound as e: # Add specific check for model not found
+            yield f"Error: The configured AI model was not found. Please check the model name in the code. {e}".encode('utf-8')
         except exceptions.PermissionDenied as e:
             yield f"Error: API key is invalid or has expired. {e}".encode('utf-8')
         except Exception as e:
@@ -181,11 +132,10 @@ def unlock_roleplay():
         return jsonify({"error": "Not logged in"}), 401
 
     user = User.query.get(session['user_id'])
-    if not user:
-        return jsonify({"error": "User not found."}), 404
+    roleplay_cost = 100 # Define the cost for the upgrade
 
-    if user.beats >= ROLEPLAY_COST:
-        user.beats -= ROLEPLAY_COST
+    if user.beats >= roleplay_cost:
+        user.beats -= roleplay_cost
         user.roleplay_unlocked = True
         db.session.commit()
         return jsonify(user.to_dict())
