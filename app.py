@@ -17,7 +17,7 @@ db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
 # --- Application Constants ---
-ROLEPLAY_CHATS_REQUIRED = 20
+ROLEPLAY_CHATS_REQUIRED = 3
 
 PERSONAS = {
     'helpful': {
@@ -77,7 +77,8 @@ class User(db.Model):
             "beats": self.beats,
             "roleplay_unlocked": self.roleplay_unlocked,
             "persona": session.get('persona', DEFAULT_PERSONA), # Include current persona
-            "ai_name": self.ai_name
+            "ai_name": self.ai_name,
+            "roleplay_chats_required": ROLEPLAY_CHATS_REQUIRED # Add requirement to user data
         }
 
 @app.route('/')

@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
         switch (state.subState) {
             case 'prompt':
                 if (choice === '1') { // Guest
-                    state.currentUser = { username: 'Guest', chats_sent: 0, beats: 0, roleplay_unlocked: false, persona: 'helpful', ai_name: 'AI' };
+                    state.currentUser = { username: 'Guest', chats_sent: 0, beats: 0, roleplay_unlocked: false, persona: 'helpful', ai_name: 'AI', roleplay_chats_required: 3 };
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser)); // Save guest session
                     await type("\nAccess Granted. Welcome, Guest.");
                     await type("Loading main interface...");
@@ -196,12 +196,12 @@ document.addEventListener('DOMContentLoaded', () => {
             case '3':
                 state.appState = 'beats';
                 clearScreen();
-                const roleplayChatsRequired = 20;
+                const roleplayChatsRequired = state.currentUser?.roleplay_chats_required || 3; // Use backend value, with fallback
                 await type("=== Beats & Upgrades ===");
                 await type(`Current Chats Sent: ${state.currentUser?.chats_sent || 0}`);
                 await type("\nAvailable Upgrades:");
                 if (state.currentUser?.roleplay_unlocked) {
-                    await type("[1] Roleplay Mode (Already Unlocked)");
+                    await type("[1] Roleplay Mode (UNLOCKED)");
                 } else {
                     await type(`[1] Unlock Roleplay Mode (Requires: ${roleplayChatsRequired} Chats)`);
                 }
@@ -533,7 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else if (e.key === 'ArrowDown' && state.appState === 'chat') {
             e.preventDefault();
-            if (state.historyIndex > 0) {
+            if (state.historyIndex >= 0) { // Allow going to -1
                 state.historyIndex--;
                 state.currentInput = state.commandHistory[state.historyIndex];
             } else {
@@ -567,22 +567,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // For registered users, try to sync with the server. For guests, just load.
             if (state.currentUser.username !== 'Guest') {
-                await type("Verifying session with server...", 30);
+                await type("Syncing session with server...", 30);
                 const response = await fetch('/api/user_data');
                 if (response.ok) {
                     // Server session is valid, get the latest data
                     state.currentUser = await response.json();
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                     await type("Server sync complete. Session restored. ✅");
+                    await new Promise(r => setTimeout(r, 1000));
+                    await showMainMenu();
                 } else {
-                    // Server session expired or is invalid, proceed with local data
-                    await type("Could not verify server session. Using local data. ⚠️");
+                    // Server session expired or is invalid. Clear local data and force re-login.
+                    await type("Server session expired. Please log in again. ⚠️");
+                    localStorage.removeItem('currentUser');
+                    await new Promise(r => setTimeout(r, 1000));
+                    await showLoginScreen();
                 }
-            } else {
+            } else { // Guest user
                 await type("Guest session restored. ✅");
+                await new Promise(r => setTimeout(r, 1000));
+                await showMainMenu();
             }
-            await new Promise(r => setTimeout(r, 1000));
-            await showMainMenu();
         } else {
             await type("Connection established ✅");
             await new Promise(r => setTimeout(r, 1000));
