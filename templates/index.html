@@ -15,11 +15,13 @@
 <body class="font-mono">
     <div id="terminal" class="p-4 h-screen overflow-y-auto" >
         <div id="output"></div>
-        <div id="input-wrapper" class="flex items-center font-mono">
-            <span class="text-cyan-400">&gt;</span>
-            <span id="input-pre-cursor" class="ml-2 whitespace-pre"></span>
-            <span id="cursor" class="w-2 h-4 animate-blink"></span>
-            <span id="input-post-cursor" class="whitespace-pre"></span>
+        <div id="input-line" class="flex">
+            <div id="input-wrapper" class="flex items-center font-mono">
+                <span class="text-cyan-400">&gt;</span>
+                <span id="input-pre-cursor" class="ml-2 whitespace-pre"></span>
+                <span id="cursor" class="w-2 h-4 animate-blink"></span>
+                <span id="input-post-cursor" class="whitespace-pre"></span>
+            </div>
         </div>
         <!-- A hidden input to capture keyboard events on mobile -->
         <input type="text" id="hidden-input" class="opacity-0 w-0 h-0">

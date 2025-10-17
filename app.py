@@ -8,15 +8,13 @@ from dotenv import load_dotenv
 
 app = Flask(__name__)
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()
 
-# --- Configuration ---
 app.config['SECRET_KEY'] = os.urandom(24)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
-# --- Application Constants ---
 ROLEPLAY_COST = 100
 CHANGE_NAME_COST_CHATS = 20
 
@@ -38,30 +36,24 @@ PERSONAS = {
 DEFAULT_PERSONA = 'helpful'
 
 def get_current_persona_prompt():
-    """Gets the full prompt text for the user's current persona."""
-    ai_name = 'AI' # Default for guests
+    ai_name = 'AI'
     if 'user_id' in session:
         user = User.query.get(session['user_id'])
         if user:
             ai_name = user.ai_name
         persona_key = session.get('persona', DEFAULT_PERSONA)
-    else: # Guest user
+    else:
         persona_key = request.json.get('persona', DEFAULT_PERSONA)
 
     prompt_template = PERSONAS.get(persona_key, PERSONAS[DEFAULT_PERSONA])['prompt']
     return prompt_template.format(ai_name=ai_name)
 
 
-
-# --- Gemini API Configuration ---
-# Load the API key from an environment variable for security.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    # This provides a clear error if the key is missing when you start the app.
     raise ValueError("Error: GEMINI_API_KEY environment variable not set.")
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- Database Models ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(20), unique=True, nullable=False)
@@ -77,15 +69,13 @@ class User(db.Model):
             "chats_sent": self.chats_sent,
             "beats": self.beats,
             "roleplay_unlocked": self.roleplay_unlocked,
-            "persona": session.get('persona', DEFAULT_PERSONA), # Include current persona
+            "persona": session.get('persona', DEFAULT_PERSONA),
             "ai_name": self.ai_name
         }
 
 @app.route('/')
 def index():
     return render_template('index.html')
-
-# --- API Routes ---
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -111,15 +101,21 @@ def login():
     user = User.query.filter_by(username=username).first()
     if user and bcrypt.check_password_hash(user.password, password):
         session['user_id'] = user.id
-        session['persona'] = session.get('persona', DEFAULT_PERSONA) # Restore or set default
+        session['persona'] = session.get('persona', DEFAULT_PERSONA)
         return jsonify(user.to_dict())
     return jsonify({"error": "Invalid credentials."}), 401
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
     session.pop('user_id', None)
-    session.pop('chat_history', None) # Clear chat history on logout
     return jsonify({"message": "Logged out."})
+
+@app.route('/api/clear_chat_history', methods=['POST'])
+def clear_chat_history():
+    if 'user_id' in session:
+        session.pop('chat_history', None)
+        session.modified = True
+    return jsonify({"message": "Chat history cleared."})
 
 @app.route('/api/user_data')
 def user_data():
@@ -167,24 +163,21 @@ def set_ai_name():
 
 @app.route('/api/chat', methods=['POST'])
 def chat_proxy():
-    # Clear history if requested
-    if request.json.get('clear_history'):
-        session.pop('chat_history', None)
-
     if 'user_id' in session:
-        user = User.query.get(session['user_id'])
-        if not user: # Add validation check
-            return Response("Error: Authenticated user not found.", status=500, content_type='text/plain')
-        user.chats_sent += 1
-        user.beats += 1
-        db.session.commit()
+        try:
+            user = User.query.get(session['user_id'])
+            if user:
+                user.chats_sent += 1
+                user.beats += 1
+                db.session.commit()
+        except Exception as e:
+            # Log the error but don't block the chat if DB write fails
+            app.logger.error(f"Error updating user stats: {e}")
 
     user_prompt = request.json.get('prompt')
-    # For Gemini, we can prime the model with a user/model exchange to set the persona.
-    # Using a model confirmed to be available from the startup log.
     model = genai.GenerativeModel('gemini-2.5-flash')
 
-    # Retrieve or initialize chat history from the session
+    # Initialize or retrieve chat history from session
     if 'chat_history' not in session:
         session['chat_history'] = [
             {
@@ -196,32 +189,16 @@ def chat_proxy():
                 "parts": ["Acknowledged. Systems online. Ready for input, operator."]
             }
         ]
-    chat_history = session['chat_history']
-
-    # Add the user's new prompt to the history *before* starting the stream.
-    # This is safe because we are still in the original request context.
-    chat_history.append({"role": "user", "parts": [user_prompt]})
-    session.modified = True
     
+    chat_history = session['chat_history']
     chat = model.start_chat(history=chat_history)
 
-    def generate(history):
-        full_response = []
+    def generate():
         try:
-            # Send the user's message and stream the response
-            response = chat.send_message(user_prompt, stream=True)
+            response = chat.send_message(user_prompt, stream=True)            
             for chunk in response:
                 if chunk.parts:
-                    text_chunk = chunk.text
-                    full_response.append(text_chunk)
-                    yield text_chunk.encode('utf-8')
-            
-            # The user prompt is already in the history, so we just add the model's response.
-            history.append({"role": "model", "parts": ["".join(full_response)]})
-            
-            with app.test_request_context():
-                session['chat_history'] = history
-                session.modified = True
+                    yield chunk.text.encode('utf-8')
 
         except exceptions.NotFound as e:
             yield f"Error: The configured AI model was not found, or is inaccessible. Please check the model name: {e}".encode('utf-8')
@@ -230,7 +207,16 @@ def chat_proxy():
         except Exception as e:
             yield f"Error: Could not get response from AI: {e}".encode('utf-8')
 
-    return Response(generate(chat_history), content_type='text/plain; charset=utf-8')
+    # Convert the 'Content' objects in chat.history to a JSON-serializable list of dicts
+    # before storing it in the session.
+    serializable_history = [
+        {'role': msg.role, 'parts': [part.text for part in msg.parts]}
+        for msg in chat.history
+    ]
+    session['chat_history'] = serializable_history
+    session.modified = True
+
+    return Response(generate(), content_type='text/plain; charset=utf-8')
 
 @app.route('/api/unlock_roleplay', methods=['POST'])
 def unlock_roleplay():
@@ -250,9 +236,6 @@ def unlock_roleplay():
         return jsonify({"error": "Not enough beats."}), 400
 
 if __name__ == '__main__':
-    # For development: delete and recreate the database on each start.
-    # This ensures the schema is always in sync with the models.
-    # The database is located in the 'instance' folder by default.
     with app.app_context():
         db_path = os.path.join(app.instance_path, 'site.db')
         if os.path.exists(db_path):

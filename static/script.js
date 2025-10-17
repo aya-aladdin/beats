@@ -6,20 +6,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const terminal = document.getElementById('terminal');
     const hiddenInput = document.getElementById('hidden-input');
 
-    // --- State Management ---
     let state = {
-        appState: 'login', // login, menu, chat, profile, beats, persona, settings, accessibility, set_ai_name
-        subState: 'prompt', // For multi-step inputs like username/password
-        tempData: {}, // To hold username during login flow
+        appState: 'login',
+        subState: 'prompt',
+        tempData: {},
         isExecuting: false,
-        currentUser: null, // { username, chats_sent, beats, roleplay_unlocked }
+        currentUser: null,
         commandHistory: [],
         historyIndex: -1,
         menu: {
-            items: [], // { text, command, isSelected }
+            items: [],
             selectedIndex: 0,
             isNavigable: false,
-            focusedChoiceIndex: 0, // For horizontal navigation in new menus
+            focusedChoiceIndex: 0,
         },
         accessibility: {
             theme: 'default', typingSpeed: 20, cursorBlink: true, menuArrows: true, fontSize: 'normal',
@@ -31,8 +30,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const PROMPT = `&gt;`;
 
-    // --- Core Functions ---
-
     const focusInput = () => hiddenInput.focus();
     terminal.addEventListener('click', () => {
         if (window.getSelection().toString().length === 0) focusInput();
@@ -41,7 +38,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const type = async (text, delay = state.accessibility.typingSpeed) => {
         const element = createResponseElement();
         for (let i = 0; i < text.length; i++) {
-            // This check is for masking the "Enter password:" prompt itself if we wanted to, but it's not what we need for live input masking.
             const char = (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) ? '*' : text.charAt(i);
             element.innerHTML += parseMarkdown(char);
             terminal.scrollTop = terminal.scrollHeight;
@@ -52,21 +48,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const processCommand = async (command) => {
         state.isExecuting = true;
-        // --- CHANGE 1: Immediate Input Clearing ---
-        // Capture the command and clear the input line visually and from state *before* processing.
         const commandToProcess = command;
         state.currentInput = '';
         renderInput();
 
         const displayCommand = (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) ? command.replace(/./g, '*') : command;
-        addToOutput(`${PROMPT} ${displayCommand}`); // Show the processed command in the output
+        addToOutput(`${PROMPT} ${displayCommand}`);
 
         if (commandToProcess.trim() !== '' && state.appState === 'chat') {
             state.commandHistory.unshift(commandToProcess);
             state.historyIndex = -1;
         }
-        
-        // State-based command processing
         switch (state.appState) {
             case 'login': await handleLogin(commandToProcess); break;
             case 'menu': await handleMenu(commandToProcess); break;
@@ -74,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'profile': await handleProfile(commandToProcess); break;
             case 'beats': await handleBeats(commandToProcess); break;
             case 'persona': await handlePersona(commandToProcess); break;
-            case 'settings': await handleSettings(commandToProcess); break; // New handler
+            case 'settings': await handleSettings(commandToProcess); break;
             case 'accessibility': await handleAccessibility(commandToProcess); break;
             case 'set_ai_name': await handleSetAiName(commandToProcess); break;
         }
@@ -83,8 +75,6 @@ document.addEventListener('DOMContentLoaded', () => {
              inputWrapper.style.display = 'flex';
         }
     };
-
-    // --- State Handlers ---
 
     async function showLoginScreen() {
         state.appState = 'login';
@@ -103,17 +93,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const choice = command.trim();
         switch (state.subState) {
             case 'prompt':
-                if (choice === '1') { // Guest
+                if (choice === '1') {
                     state.currentUser = { username: 'Guest', chats_sent: 0, beats: 0, roleplay_unlocked: false, persona: 'helpful', ai_name: 'AI' };
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser)); // Save guest session
+                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                     await type("\nAccess Granted. Welcome, Guest.");
                     await type("Loading main interface...");
                     await new Promise(r => setTimeout(r, 1000));
                     await showMainMenu();
-                } else if (choice === '2') { // Login
+                } else if (choice === '2') {
                     state.subState = 'username';
                     await type("Enter username:");
-                } else if (choice === '3') { // Register
+                } else if (choice === '3') {
                     state.subState = 'register_username';
                     await type("Enter new username:");
                 } else {
@@ -194,28 +184,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleMenu(command) {
-        // Make the command check case-insensitive
         switch(command.trim().toLowerCase()) {
             case '1':
                 state.appState = 'chat';
                 state.menu.isNavigable = false;
                 clearScreen();
-                await fetchAIResponse(null, true); // Clear history on entering chat
+                await type("AI Chat Interface. Type 'exit' to return to menu.");
                 break;
             case '2':
                 await type("Roleplay mode is not yet implemented.");
-                return; // Use return to stop further execution and wait for next command
+                return;
             case '3':
                 state.appState = 'beats';
                 state.menu.isNavigable = true;
                 state.menu.selectedIndex = 0;
                 clearScreen();
-                const roleplayCost = 30;
+                const ROLEPLAY_COST = 100; // Match backend
                 await type("=== Beats & Upgrades ===");
                 await type(`Current Beats: ${state.currentUser?.beats || 0}`);
                 await type("\nAvailable Upgrades:");
                 state.menu.items = [
-                    { text: state.currentUser?.roleplay_unlocked ? "[1] Roleplay Mode (Already Unlocked)" : `[1] Unlock Roleplay Mode (Cost: ${roleplayCost} Beats)`, command: "1" },
+                    { text: state.currentUser?.roleplay_unlocked ? "[1] Roleplay Mode (Already Unlocked)" : `[1] Unlock Roleplay Mode (Cost: ${ROLEPLAY_COST} Beats)`, command: "1" },
                     { text: "\n[exit] Return to menu", command: "exit" }
                 ];
                 renderMenu();
@@ -228,7 +217,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case '5':
                 state.appState = 'profile';
-                // To ensure we have the latest stats, especially after chatting
                 if (state.currentUser.username !== 'Guest') {
                     await updateUserStats();
                 }
@@ -241,9 +229,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type(`ROLEPLAY UNLOCKED: ${state.currentUser?.roleplay_unlocked ? 'YES' : 'NO'}`);
                 await type("\nType 'exit' to return to menu.");
                 break;
-            case '6':
-                // Cycle through font sizes
-                const sizes = ['normal', 'large', 'small']; // Cycle normal -> large -> small
+            case 'exit': // This was incorrectly '6' before
+                const sizes = ['normal', 'large', 'small'];
                 let currentSizeIndex = sizes.indexOf(state.accessibility.fontSize);
                 let nextSizeIndex = (currentSizeIndex + 1) % sizes.length;
                 state.accessibility.fontSize = sizes[nextSizeIndex];
@@ -251,9 +238,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 saveAccessibilitySettings();
                 const newSizeName = state.accessibility.fontSize.charAt(0).toUpperCase() + state.accessibility.fontSize.slice(1);
                 await type(`Font size set to: ${newSizeName}`);
-                break;
-            case '7':
-            case 'exit':
+                break; // Kept as a hidden feature, maybe move to accessibility?
+            case '6':
                 await type("Logging out...");
                 if (state.currentUser.username !== 'Guest') {
                     await fetch('/api/logout', { method: 'POST' });
@@ -270,12 +256,15 @@ document.addEventListener('DOMContentLoaded', () => {
     async function handleChat(command) {
         if (command.toLowerCase() === 'exit') {
             state.menu.isNavigable = true;
+            if (state.currentUser.username !== 'Guest') {
+                await fetch('/api/clear_chat_history', { method: 'POST', credentials: 'same-origin' });
+            }
             await showMainMenu();
             return;
         }
         if (command.toLowerCase() === 'clear') {
             clearScreen();
-            await fetchAIResponse(null, true); // Clear history on 'clear' command
+            await type("AI Chat Interface. Type 'exit' to return to menu.");
             return;
         }
         await fetchAIResponse(command);
@@ -384,7 +373,6 @@ document.addEventListener('DOMContentLoaded', () => {
         await type("=== ACCESSIBILITY ===");
         await type("Use ↑/↓ to select a setting, ←/→ to change it. Type 'exit' to return.");
 
-        // Define the structure for the new menu
         state.menu.items = [
             {
                 id: 'theme', label: '[1] Theme',
@@ -430,7 +418,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleAccessibility(command) {
-        // This function is now primarily for handling 'exit'
         const choice = command.trim().toLowerCase();
         switch(choice) {
             case 'exit':
@@ -447,29 +434,27 @@ document.addEventListener('DOMContentLoaded', () => {
             clearScreen();
             await showSettingsMenu();
             state.appState = 'settings';
-            return; // Exit this handler
+            return;
         }
 
-        // For registered users, first verify the session is still active on the server.
-        // If not, update the name locally to prevent an error.
         const sessionCheckResponse = await fetch('/api/user_data');
         if (!sessionCheckResponse.ok) {
             state.currentUser.ai_name = newName;
             localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
             await type(`AI name changed to '${newName}'. (Local session)`);
             await type("Type 'exit' to return to settings.");
-            // Stay in this state, don't automatically go back.
             return;
         }
 
         const response = await fetch('/api/set_ai_name', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
             body: JSON.stringify({ name: newName })
         });
         const data = await response.json();
         if (response.ok) {
-            await updateUserStats(); // Refresh user data to get the new name
+            await updateUserStats();
             await type(data.message);
             await type("Type 'exit' to return to settings.");
         } else {
@@ -493,63 +478,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
         }
 
-        // For guests, handle persona change on the client-side only
+        // Handle persona change differently for guests vs. registered users
         if (state.currentUser.username === 'Guest') {
+            // For guests, handle the change on the client-side only
             state.currentUser.persona = personaKey;
             localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
             await type(`Persona switched to ${personaKey}.`);
             await new Promise(r => setTimeout(r, 1000));
-            await handleSettings('1'); // Re-show persona menu
-        }
-
-        // For registered users, first verify the session is still active on the server.
-        // If not, treat them like a guest for this action to prevent errors.
-        const sessionCheckResponse = await fetch('/api/user_data');
-        if (!sessionCheckResponse.ok) {
-            state.currentUser.persona = personaKey;
-            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-            await type(`Persona switched to ${personaKey}. (Local session)`);
-            await new Promise(r => setTimeout(r, 1000));
-            await handleSettings('1'); // Re-show persona menu
-        }
-
-        const response = await fetch('/api/set_persona', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ persona: personaKey })
-        });
-
-        const data = await response.json();
-        if (response.ok) {
-            await type(data.message);
-            // Update local state to reflect the change immediately
-            if (state.currentUser) {
-                state.currentUser.persona = personaKey;
-            }
-            await new Promise(r => setTimeout(r, 1000));
-            await handleSettings('1'); // Re-show persona menu
+            await handleSettings('1'); // Re-render the persona menu
         } else {
-            await type(`Error: ${data.error}`);
+            // For registered users, update the server
+            const response = await fetch('/api/set_persona', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin', // Ensure session cookie is sent
+                body: JSON.stringify({ persona: personaKey })
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                await updateUserStats(); // Sync local state with server
+                await type(data.message);
+                await new Promise(r => setTimeout(r, 1000));
+                await handleSettings('1'); // Re-render the persona menu
+            } else {
+                await type(`Error: ${data.error}`);
+                await type(`Persona switched to ${personaKey} in local session only.`);
+            }
         }
     }
 
-    // --- Utility Functions ---
-
     const parseMarkdown = (text) => {
         return text
-            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>') // Bold
-            .replace(/\*(.*?)\*/g, '<i>$1</i>');   // Italic
+            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+            .replace(/\*(.*?)\*/g, '<i>$1</i>');
     };
 
-    const fetchAIResponse = async (prompt, clearHistory = false) => {
-        if (clearHistory && !prompt) {
-            // Just clear history and show the initial message
-            await type("AI Chat Interface. Type 'exit' to return to menu.");
-            await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear_history: true }) });
-            return;
-        }
-
-        // Create the response element and show the typing indicator immediately
+    const fetchAIResponse = async (prompt) => {
         const responseElement = createResponseElement();
         responseElement.innerHTML = `AI: <div class="typing-indicator"><span></span><span></span><span></span></div>`;
         let firstChunk = true;
@@ -562,11 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt,
-                        persona: state.currentUser?.persona, // Send current persona for guest users
-                        clear_history: clearHistory
-                    }),
+                    credentials: 'same-origin', // Add this to authenticate chat requests
+                    body: JSON.stringify({ prompt, persona: state.currentUser?.persona }),
                     signal: state.abortController.signal,
                 });
     
@@ -582,37 +544,36 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (done) break;
     
                     if (firstChunk) {
-                        responseElement.innerHTML = 'AI: '; // Clear the indicator
+                        responseElement.innerHTML = 'AI: ';
                         firstChunk = false;
                     }
                     const chunk = decoder.decode(value, { stream: true });
                     responseElement.innerHTML += parseMarkdown(chunk).replace(/\n/g, '<br>');
                     terminal.scrollTop = terminal.scrollHeight;
                 }
-                // Call updateUserStats but don't await it here, to avoid race conditions with error display
-                updateUserStats();
+                await updateUserStats();
     
             } catch (error) {
                 if (error.name !== 'AbortError') {
-                    responseElement.innerHTML += `<br><i>Error: ${error.message}</i>`;
+                    responseElement.textContent = `Error: ${error.message}`;
                 }
             }
         })();
     };
 
     async function updateUserStats() {
-        // For guests, we just increment the local state
         if (state.currentUser.username === 'Guest') {
             state.currentUser.chats_sent++;
             state.currentUser.beats++;
             return;
         }
-        // For registered users, fetch the authoritative state from the server
         try {
-            const response = await fetch('/api/user_data');
+            const response = await fetch('/api/user_data', {
+                method: 'GET',
+                credentials: 'same-origin' // Also ensure this GET request is authenticated
+            });
             if (response.ok) {
                 state.currentUser = await response.json();
-                // Keep localStorage in sync with the server's state
                 if (state.currentUser.username !== 'Guest') {
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                 }
@@ -623,7 +584,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function purchaseRoleplayUnlock() {
-        const response = await fetch('/api/unlock_roleplay', { method: 'POST' });
+        const response = await fetch('/api/unlock_roleplay', {
+            method: 'POST',
+            credentials: 'same-origin'
+        });
         if (response.ok) {
             state.currentUser = await response.json();
             await type("Success! Roleplay Mode has been unlocked.");
@@ -635,7 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await type(`Failed: ${errorData.error}`);
             await type("Returning to upgrades menu...");
             await new Promise(r => setTimeout(r, 1500));
-            await handleMenu('3'); // Re-show the beats menu
+            await handleMenu('3');
         }
     }
 
@@ -657,7 +621,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const renderMenu = () => {
-        // Find or create a dedicated container for the menu
         let menuContainer = output.querySelector('.menu-container');
         if (!menuContainer) {
             menuContainer = document.createElement('div');
@@ -665,7 +628,6 @@ document.addEventListener('DOMContentLoaded', () => {
             output.appendChild(menuContainer);
         }
 
-        // Always clear the container before re-rendering
         menuContainer.innerHTML = '';
 
         state.menu.items.forEach((item, index) => {
@@ -680,8 +642,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const renderAccessibilityMenu = () => {
-        // Remove the old menu if it exists
-        const oldContainer = output.querySelector('.access-container'); if (oldContainer) oldContainer.remove();
+        const oldContainer = output.querySelector('.access-container');
+        if (oldContainer) oldContainer.remove();
         const oldExitText = output.querySelector('.access-exit-text'); if (oldExitText) oldExitText.remove();
 
         const container = document.createElement('div'); container.className = 'access-container';
@@ -689,9 +651,8 @@ document.addEventListener('DOMContentLoaded', () => {
         state.menu.items.forEach((option, optionIndex) => { const optionDiv = document.createElement('div'); optionDiv.className = 'access-option'; if (optionIndex === state.menu.selectedIndex) { optionDiv.classList.add('selected'); } const labelDiv = document.createElement('div'); labelDiv.className = 'access-label'; labelDiv.textContent = option.label; optionDiv.appendChild(labelDiv); const choicesDiv = document.createElement('div'); choicesDiv.className = 'access-choices'; option.choices.forEach(choice => { const choiceBox = document.createElement('div'); choiceBox.className = 'choice-box ' + (choice.classes || ''); if (choice.value === state.accessibility[option.id]) { choiceBox.classList.add('active'); } choiceBox.textContent = choice.text; choicesDiv.appendChild(choiceBox); }); optionDiv.appendChild(choicesDiv); container.appendChild(optionDiv); });
         output.appendChild(container);
 
-        // Add the exit text back visually
         const exitDiv = document.createElement('div');
-        exitDiv.className = 'access-exit-text'; // Give it a class for easy removal
+        exitDiv.className = 'access-exit-text';
         exitDiv.innerHTML = "\n[exit] Return to settings";
         output.appendChild(exitDiv);
         terminal.scrollTop = terminal.scrollHeight;
@@ -712,16 +673,12 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     function applyAccessibilitySettings() {
-        // Theme
-        // Be specific about which classes to remove to avoid breaking base styles
         document.body.classList.remove('theme-green', 'theme-amber', 'theme-solarized-dark');
         if (state.accessibility.theme !== 'default') {
             document.body.classList.add(`theme-${state.accessibility.theme}`);
         }
-        // Font Size
         document.body.classList.remove('font-size-small', 'font-size-normal', 'font-size-large');
         document.body.classList.add(`font-size-${state.accessibility.fontSize}`);
-        // Cursor Blink
         document.body.classList.toggle('no-blink', !state.accessibility.cursorBlink);
     }
 
@@ -732,11 +689,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function loadAccessibilitySettings() {
         const saved = localStorage.getItem('accessibility');
         if (saved) state.accessibility = JSON.parse(saved);
-        // Ensure new settings have default values if not in localStorage
         state.accessibility.fontSize = state.accessibility.fontSize || 'normal';
         applyAccessibilitySettings();
     }
-    // --- Event Handlers ---
 
     document.addEventListener('keydown', (e) => {
         if (state.isExecuting) {
@@ -747,11 +702,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (e.key === 'Enter') {
-            // Prioritize typed input. If the user typed something, use that.
             if (state.currentInput.trim() !== '') {
                 processCommand(state.currentInput);
             } 
-            // Otherwise, if in a navigable menu, use the selected item.
             else if (state.menu.isNavigable) {
                 const selectedCommand = state.menu.items[state.menu.selectedIndex]?.command;
                 if (selectedCommand) processCommand(selectedCommand);
@@ -775,12 +728,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     currentChoiceIndex++;
                 }
                 const newValue = choices[currentChoiceIndex].value;
-                // Update the state
                 state.accessibility[currentOption.id] = newValue;
                 applyAccessibilitySettings();
                 saveAccessibilitySettings();
 
-                // Provide immediate feedback for typing speed change
                 if (currentOption.id === 'typingSpeed') {
                     type(`Typing speed set to ${choices[currentChoiceIndex].text}.`);
                 }
@@ -795,20 +746,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else if (state.menu.isNavigable && state.accessibility.menuArrows && e.key === 'ArrowDown') {
             e.preventDefault();
-            // Check if there's an exit item which is often separated by a newline
             const lastSelectableIndex = state.menu.items.findIndex(item => item.text.includes('\n'));
             const maxIndex = lastSelectableIndex !== -1 ? lastSelectableIndex : state.menu.items.length - 1;
             if (state.menu.selectedIndex < maxIndex) {
                 state.menu.selectedIndex++;
                 renderMenu();
             }
-        } else if (state.menu.isNavigable && e.key.length === 1 && !isNaN(parseInt(e.key))) {
-            // Allow number keys to select menu items directly
+        } else if (state.menu.isNavigable && e.key.length === 1 && !isNaN(parseInt(e.key)) && parseInt(e.key) > 0) {
             const num = parseInt(e.key);
             const item = state.menu.items.find(i => i.text.startsWith(`[${num}]`));
             if (item) {
-                // By not awaiting, we let the keydown handler finish, preventing a re-render.
-                // The processCommand function will handle the state changes.
                 processCommand(item.command);
             }
         } else if (e.key === 'ArrowLeft') {
@@ -847,11 +794,9 @@ document.addEventListener('DOMContentLoaded', () => {
             state.cursorPosition++;
         }
 
-        // Visually update the input line
         renderInput();
     });
 
-    // --- Initial Boot Sequence ---
     const boot = async () => {
         state.isExecuting = true;
         inputWrapper.style.display = 'none';
@@ -859,23 +804,19 @@ document.addEventListener('DOMContentLoaded', () => {
         await type("Booting AI Terminal...", 30);
         await new Promise(r => setTimeout(r, 500));
 
-        // Check for a saved session in localStorage
         const savedUser = localStorage.getItem('currentUser');
         if (savedUser) {
             state.currentUser = JSON.parse(savedUser);
             await type(`Resuming session for ${state.currentUser.username}...`, 30);
 
-            // For registered users, try to sync with the server. For guests, just load.
             if (state.currentUser.username !== 'Guest') {
                 await type("Verifying session with server...", 30);
                 const response = await fetch('/api/user_data');
                 if (response.ok) {
-                    // Server session is valid, get the latest data
                     state.currentUser = await response.json();
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                     await type("Server sync complete. Session restored. ✅");
                 } else {
-                    // Server session expired or is invalid, proceed with local data
                     await type("Could not verify server session. Using local data. ⚠️");
                 }
             } else {
