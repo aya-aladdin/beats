@@ -694,8 +694,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applyAccessibilitySettings() {
         // Theme
-        document.body.className = ''; // Clear existing theme classes
-        document.body.classList.add('bg-black', 'text-green-400', 'font-mono'); // Re-apply base classes from index.html
+        // Be specific about which classes to remove to avoid breaking base styles
+        document.body.classList.remove('theme-green', 'theme-amber', 'theme-solarized-dark');
         if (state.accessibility.theme !== 'default') {
             document.body.classList.add(`theme-${state.accessibility.theme}`);
         }
@@ -755,10 +755,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (e.key === 'ArrowRight' && currentChoiceIndex < choices.length - 1) {
                     currentChoiceIndex++;
                 }
+                const newValue = choices[currentChoiceIndex].value;
                 // Update the state
-                state.accessibility[currentOption.id] = choices[currentChoiceIndex].value;
+                state.accessibility[currentOption.id] = newValue;
                 applyAccessibilitySettings();
                 saveAccessibilitySettings();
+
+                // Provide immediate feedback for typing speed change
+                if (currentOption.id === 'typingSpeed') {
+                    type(`Typing speed set to ${choices[currentChoiceIndex].text}.`);
+                }
             }
             renderAccessibilityMenu();
 
