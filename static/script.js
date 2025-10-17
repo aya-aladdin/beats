@@ -202,7 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case '2':
                 await type("Roleplay mode is not yet implemented.");
-                break;
+                return; // Use return to stop further execution and wait for next command
             case '3':
                 state.appState = 'beats';
                 state.menu.isNavigable = true;
@@ -540,45 +540,53 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const fetchAIResponse = async (prompt) => {
+        // Create the response element and show the typing indicator immediately
         const responseElement = createResponseElement();
-        responseElement.innerHTML = 'AI: ';
+        responseElement.innerHTML = `AI: <div class="typing-indicator"><span></span><span></span><span></span></div>`;
+        let firstChunk = true;
         state.abortController = new AbortController();
-
-        try {
-            const response = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    persona: state.currentUser?.persona // Send current persona for guest users
-                }),
-                signal: state.abortController.signal,
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(errorText || `API Error: ${response.statusText}`);
+    
+        // We don't await this function. This lets the UI update immediately with the
+        // typing indicator, while the fetch happens in the background.
+        (async () => {
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt,
+                        persona: state.currentUser?.persona // Send current persona for guest users
+                    }),
+                    signal: state.abortController.signal,
+                });
+    
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || `API Error: ${response.statusText}`);
+                }
+    
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+    
+                    if (firstChunk) {
+                        responseElement.innerHTML = 'AI: '; // Clear the indicator
+                        firstChunk = false;
+                    }
+                    const chunk = decoder.decode(value, { stream: true });
+                    responseElement.innerHTML += parseMarkdown(chunk).replace(/\n/g, '<br>');
+                    terminal.scrollTop = terminal.scrollHeight;
+                }
+                await updateUserStats(); // Let the backend be the source of truth
+    
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    responseElement.textContent = `Error: ${error.message}`;
+                }
             }
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                // Parse markdown and newlines before adding to innerHTML
-                responseElement.innerHTML += parseMarkdown(chunk).replace(/\n/g, '<br>');
-                terminal.scrollTop = terminal.scrollHeight;
-            }
-            await updateUserStats(); // Let the backend be the source of truth
-
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                responseElement.innerHTML += '\n<span class="text-red-500">[Execution stopped]</span>';
-            } else {
-                responseElement.textContent = `Error: ${error.message}`;
-            }
-        }
+        })();
     };
 
     async function updateUserStats() {
@@ -638,57 +646,43 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const renderMenu = () => {
-        // Clear only the part of the output that contains the old menu
-        const menuItems = output.querySelectorAll('.menu-item');
-        menuItems.forEach(item => item.remove());
+        // Find or create a dedicated container for the menu
+        let menuContainer = output.querySelector('.menu-container');
+        if (!menuContainer) {
+            menuContainer = document.createElement('div');
+            menuContainer.className = 'menu-container';
+            output.appendChild(menuContainer);
+        }
+
+        // Always clear the container before re-rendering
+        menuContainer.innerHTML = '';
 
         state.menu.items.forEach((item, index) => {
             const isSelected = index === state.menu.selectedIndex;
             const selector = (isSelected && state.accessibility.menuArrows) ? `&gt; ` : '  ';
             const line = `${selector}${item.text}`;
             const div = document.createElement('div');
-            div.classList.add('menu-item'); // Add class for easy removal
             div.innerHTML = isSelected ? `<b>${line}</b>` : line;
-            output.appendChild(div);
+            menuContainer.appendChild(div);
         });
         terminal.scrollTop = terminal.scrollHeight;
     };
 
     const renderAccessibilityMenu = () => {
         // Remove the old menu if it exists
-        const oldContainer = output.querySelector('.access-container');
-        if (oldContainer) oldContainer.remove();
+        const oldContainer = output.querySelector('.access-container'); if (oldContainer) oldContainer.remove();
+        const oldExitText = output.querySelector('.access-exit-text'); if (oldExitText) oldExitText.remove();
 
-        const container = document.createElement('div');
-        container.className = 'access-container';
+        const container = document.createElement('div'); container.className = 'access-container';
 
-        state.menu.items.forEach((option, optionIndex) => {
-            const optionDiv = document.createElement('div');
-            optionDiv.className = 'access-option';
-            if (optionIndex === state.menu.selectedIndex) {
-                optionDiv.classList.add('selected');
-            }
-
-            const labelDiv = document.createElement('div');
-            labelDiv.className = 'access-label';
-            labelDiv.textContent = option.label;
-            optionDiv.appendChild(labelDiv);
-
-            const choicesDiv = document.createElement('div');
-            choicesDiv.className = 'access-choices';
-            option.choices.forEach(choice => {
-                const choiceBox = document.createElement('div');
-                choiceBox.className = 'choice-box ' + (choice.classes || '');
-                if (choice.value === state.accessibility[option.id]) {
-                    choiceBox.classList.add('active');
-                }
-                choiceBox.textContent = choice.text;
-                choicesDiv.appendChild(choiceBox);
-            });
-            optionDiv.appendChild(choicesDiv);
-            container.appendChild(optionDiv);
-        });
+        state.menu.items.forEach((option, optionIndex) => { const optionDiv = document.createElement('div'); optionDiv.className = 'access-option'; if (optionIndex === state.menu.selectedIndex) { optionDiv.classList.add('selected'); } const labelDiv = document.createElement('div'); labelDiv.className = 'access-label'; labelDiv.textContent = option.label; optionDiv.appendChild(labelDiv); const choicesDiv = document.createElement('div'); choicesDiv.className = 'access-choices'; option.choices.forEach(choice => { const choiceBox = document.createElement('div'); choiceBox.className = 'choice-box ' + (choice.classes || ''); if (choice.value === state.accessibility[option.id]) { choiceBox.classList.add('active'); } choiceBox.textContent = choice.text; choicesDiv.appendChild(choiceBox); }); optionDiv.appendChild(choicesDiv); container.appendChild(optionDiv); });
         output.appendChild(container);
+
+        // Add the exit text back visually
+        const exitDiv = document.createElement('div');
+        exitDiv.className = 'access-exit-text'; // Give it a class for easy removal
+        exitDiv.innerHTML = "\n[exit] Return to settings";
+        output.appendChild(exitDiv);
         terminal.scrollTop = terminal.scrollHeight;
     };
 
@@ -787,7 +781,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Allow number keys to select menu items directly
             const num = parseInt(e.key);
             const item = state.menu.items.find(i => i.text.startsWith(`[${num}]`));
-            if (item) processCommand(item.command);
+            if (item) {
+                // By not awaiting, we let the keydown handler finish, preventing a re-render.
+                // The processCommand function will handle the state changes.
+                processCommand(item.command);
+            }
         } else if (e.key === 'Backspace') {
             state.currentInput = state.currentInput.slice(0, -1);
         } else if (e.key === 'ArrowUp' && state.appState === 'chat') {

@@ -111,3 +111,29 @@ i, em { font-style: italic; }
 .theme-preview.theme-green { background-color: #000; color: #4ade80; border-color: #4ade80; }
 .theme-preview.theme-amber { background-color: #1c1c1c; color: #f59e0b; border-color: #f59e0b; }
 .theme-preview.theme-solarized-dark { background-color: #002b36; color: #839496; border-color: #268bd2; }
+
+/* --- AI Typing Indicator --- */
+.typing-indicator {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 1em; /* Prevents layout shift */
+    margin-left: 0.5rem;
+    vertical-align: bottom;
+}
+
+.typing-indicator span {
+    width: 6px;
+    height: 6px;
+    background-color: currentColor;
+    border-radius: 50%;
+    animation: jump 1.4s infinite;
+}
+
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes jump {
+    0%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-5px); }
+}
