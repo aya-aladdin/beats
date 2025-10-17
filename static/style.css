@@ -17,7 +17,7 @@
 
 /* Use the imported font */
 body {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'JetBrains Mono', monospace !important; /* Override tailwind */
     background-color: var(--bg-color);
     font-size: 13px;
     line-height: 1.4;
@@ -136,4 +136,9 @@ i, em { font-style: italic; }
 @keyframes jump {
     0%, 80%, 100% { transform: translateY(0); }
     40% { transform: translateY(-5px); }
+}
+
+/* Ensure body background applies correctly */
+body.bg-black {
+    background-color: var(--bg-color);
 }

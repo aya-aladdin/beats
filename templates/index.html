@@ -12,16 +12,13 @@
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="font-mono">
+<body class="bg-black text-green-400 font-mono text-sm">
     <div id="terminal" class="p-4 h-screen overflow-y-auto" >
         <div id="output"></div>
-        <div id="input-line" class="flex">
-            <div id="input-wrapper" class="flex items-center font-mono">
-                <span class="text-cyan-400">&gt;</span>
-                <span id="input-pre-cursor" class="ml-2 whitespace-pre"></span>
-                <span id="cursor" class="w-2 h-4 animate-blink"></span>
-                <span id="input-post-cursor" class="whitespace-pre"></span>
-            </div>
+        <div id="input-wrapper" class="flex items-center">
+            <span class="text-cyan-400">&gt;</span>
+            <span id="input-line" class="ml-2"></span>
+            <span id="cursor" class="w-2 h-4 ml-1 animate-blink"></span>
         </div>
         <!-- A hidden input to capture keyboard events on mobile -->
         <input type="text" id="hidden-input" class="opacity-0 w-0 h-0">
