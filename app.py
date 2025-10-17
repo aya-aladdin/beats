@@ -224,6 +224,13 @@ def unlock_roleplay():
         return jsonify({"error": "Not enough beats."}), 400
 
 if __name__ == '__main__':
+    # For development: delete and recreate the database on each start.
+    # This ensures the schema is always in sync with the models.
+    # The database is located in the 'instance' folder by default.
+    with app.app_context():
+        db_path = os.path.join(app.instance_path, 'site.db')
+        if os.path.exists(db_path):
+            os.remove(db_path)
     with app.app_context():
         db.create_all()
     app.run(debug=True)
