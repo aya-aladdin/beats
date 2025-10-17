@@ -118,6 +118,7 @@ def login():
 @app.route('/api/logout', methods=['POST'])
 def logout():
     session.pop('user_id', None)
+    session.pop('chat_history', None) # Clear chat history on logout
     return jsonify({"message": "Logged out."})
 
 @app.route('/api/user_data')
@@ -166,6 +167,10 @@ def set_ai_name():
 
 @app.route('/api/chat', methods=['POST'])
 def chat_proxy():
+    # Clear history if requested
+    if request.json.get('clear_history'):
+        session.pop('chat_history', None)
+
     if 'user_id' in session:
         user = User.query.get(session['user_id'])
         if not user: # Add validation check
@@ -178,28 +183,45 @@ def chat_proxy():
     # For Gemini, we can prime the model with a user/model exchange to set the persona.
     # Using a model confirmed to be available from the startup log.
     model = genai.GenerativeModel('gemini-2.5-flash')
+
+    # Retrieve or initialize chat history from the session
+    if 'chat_history' not in session:
+        session['chat_history'] = [
+            {
+                "role": "user",
+                "parts": [get_current_persona_prompt()]
+            },
+            {
+                "role": "model",
+                "parts": ["Acknowledged. Systems online. Ready for input, operator."]
+            }
+        ]
+    chat_history = session['chat_history']
+
+    # Add the user's new prompt to the history *before* starting the stream.
+    # This is safe because we are still in the original request context.
+    chat_history.append({"role": "user", "parts": [user_prompt]})
+    session.modified = True
     
-    # The conversation history sets the AI's persona.
-    chat_history = [
-        {
-            "role": "user",
-            "parts": [get_current_persona_prompt()]
-        },
-        {
-            "role": "model",
-            "parts": ["Acknowledged. Systems online. Ready for input, operator."]
-        }
-    ]
     chat = model.start_chat(history=chat_history)
 
-    def generate():
+    def generate(history):
+        full_response = []
         try:
             # Send the user's message and stream the response
             response = chat.send_message(user_prompt, stream=True)
             for chunk in response:
-                # Check if the chunk has content before accessing .text to avoid errors from safety filters.
                 if chunk.parts:
-                    yield chunk.text.encode('utf-8')
+                    text_chunk = chunk.text
+                    full_response.append(text_chunk)
+                    yield text_chunk.encode('utf-8')
+            
+            # The user prompt is already in the history, so we just add the model's response.
+            history.append({"role": "model", "parts": ["".join(full_response)]})
+            
+            with app.test_request_context():
+                session['chat_history'] = history
+                session.modified = True
 
         except exceptions.NotFound as e:
             yield f"Error: The configured AI model was not found, or is inaccessible. Please check the model name: {e}".encode('utf-8')
@@ -208,7 +230,7 @@ def chat_proxy():
         except Exception as e:
             yield f"Error: Could not get response from AI: {e}".encode('utf-8')
 
-    return Response(generate(), content_type='text/plain; charset=utf-8')
+    return Response(generate(chat_history), content_type='text/plain; charset=utf-8')
 
 @app.route('/api/unlock_roleplay', methods=['POST'])
 def unlock_roleplay():

@@ -200,7 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.appState = 'chat';
                 state.menu.isNavigable = false;
                 clearScreen();
-                await type("AI Chat Interface. Type 'exit' to return to menu.");
+                await fetchAIResponse(null, true); // Clear history on entering chat
                 break;
             case '2':
                 await type("Roleplay mode is not yet implemented.");
@@ -275,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (command.toLowerCase() === 'clear') {
             clearScreen();
-            await type("AI Chat Interface. Type 'exit' to return to menu.");
+            await fetchAIResponse(null, true); // Clear history on 'clear' command
             return;
         }
         await fetchAIResponse(command);
@@ -541,7 +541,14 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/\*(.*?)\*/g, '<i>$1</i>');   // Italic
     };
 
-    const fetchAIResponse = async (prompt) => {
+    const fetchAIResponse = async (prompt, clearHistory = false) => {
+        if (clearHistory && !prompt) {
+            // Just clear history and show the initial message
+            await type("AI Chat Interface. Type 'exit' to return to menu.");
+            await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear_history: true }) });
+            return;
+        }
+
         // Create the response element and show the typing indicator immediately
         const responseElement = createResponseElement();
         responseElement.innerHTML = `AI: <div class="typing-indicator"><span></span><span></span><span></span></div>`;
@@ -557,7 +564,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         prompt,
-                        persona: state.currentUser?.persona // Send current persona for guest users
+                        persona: state.currentUser?.persona, // Send current persona for guest users
+                        clear_history: clearHistory
                     }),
                     signal: state.abortController.signal,
                 });
@@ -581,11 +589,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     responseElement.innerHTML += parseMarkdown(chunk).replace(/\n/g, '<br>');
                     terminal.scrollTop = terminal.scrollHeight;
                 }
-                await updateUserStats(); // Let the backend be the source of truth
+                // Call updateUserStats but don't await it here, to avoid race conditions with error display
+                updateUserStats();
     
             } catch (error) {
                 if (error.name !== 'AbortError') {
-                    responseElement.textContent = `Error: ${error.message}`;
+                    responseElement.innerHTML += `<br><i>Error: ${error.message}</i>`;
                 }
             }
         })();
