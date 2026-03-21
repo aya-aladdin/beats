@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, Response, jsonify, session
+from flask import Flask, render_template, request, Response, jsonify, session, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 import requests
@@ -6,6 +6,7 @@ import json
 from sqlalchemy import text
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -82,6 +83,14 @@ class User(db.Model):
             "response_length": self.response_length
         }
 
+class ChatSession(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    name = db.Column(db.String(50)) # Character Name
+    scenario = db.Column(db.String(200)) # Short snippet of scenario
+    history = db.Column(db.Text, default='[]') # JSON string
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -101,6 +110,7 @@ def register():
     if chat_session_id and chat_session_id in CHAT_SESSIONS:
         del CHAT_SESSIONS[chat_session_id]
     session.pop('chat_session_id', None)
+    session.pop('active_db_id', None)
     
     hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
     user = User(username=username, password=hashed_password)
@@ -122,6 +132,7 @@ def login():
         if chat_session_id and chat_session_id in CHAT_SESSIONS:
             del CHAT_SESSIONS[chat_session_id]
         session.pop('chat_session_id', None)
+        session.pop('active_db_id', None)
 
         session['user_id'] = user.id
         session['persona'] = session.get('persona', DEFAULT_PERSONA) # Restore or set default
@@ -137,6 +148,7 @@ def logout():
     
     session.pop('user_id', None)
     session.pop('chat_session_id', None)
+    session.pop('active_db_id', None)
     return jsonify({"message": "Logged out."})
 
 @app.route('/api/reset_chat', methods=['POST'])
@@ -145,6 +157,7 @@ def reset_chat():
     chat_session_id = session.get('chat_session_id')
     if chat_session_id and chat_session_id in CHAT_SESSIONS:
         del CHAT_SESSIONS[chat_session_id]
+    session.pop('active_db_id', None)
     session.pop('chat_session_id', None)
     return jsonify({"message": "Chat memory cleared."})
 
@@ -232,7 +245,8 @@ def chat_proxy():
         ]
         CHAT_SESSIONS[session_id] = history
 
-    user_prompt = request.json.get('prompt')
+    is_regenerate = request.json.get('regenerate', False)
+    user_prompt = request.json.get('prompt', '')
     
     # Determine length instruction based on user preference
     # We use prompt engineering to control length instead of max_tokens to prevent cut-offs
@@ -244,8 +258,19 @@ def chat_proxy():
     elif user_pref == 'verbose':
         length_instruction = " (Provide a detailed and comprehensive response.)"
 
-    # Prepare messages for the API call, appending instruction to the prompt
-    messages = history + [{"role": "user", "content": user_prompt + length_instruction}]
+    if is_regenerate:
+        # Logic: Pop the last AI response, use the existing history (ending in user) to generate
+        if history and history[-1]['role'] == 'assistant':
+            history.pop()
+        
+        # Use the history as is (it should already have the user prompt at the end)
+        messages = history
+        # Re-append instruction to the last user message in the transient 'messages' list
+        if messages and messages[-1]['role'] == 'user':
+            messages[-1]['content'] += length_instruction
+    else:
+        # Standard flow: Append new user prompt
+        messages = history + [{"role": "user", "content": user_prompt + length_instruction}]
 
     # Always allow a high token limit so the AI can finish its sentence
     max_tokens = 4000 
@@ -291,14 +316,25 @@ def chat_proxy():
             # Append the completed turn to the session history
             # We re-fetch from CHAT_SESSIONS to ensure we are appending to the current list
             current_history = CHAT_SESSIONS.get(session_id, [])
-            current_history.append({"role": "user", "content": user_prompt})
+            
+            # Only append user prompt if it's a new chat, not a regen
+            if not is_regenerate:
+                current_history.append({"role": "user", "content": user_prompt})
+            
             current_history.append({"role": "assistant", "content": full_response_text})
             CHAT_SESSIONS[session_id] = current_history
+
+            # --- Persist to Database if active session ---
+            if 'active_db_id' in session:
+                db_chat = ChatSession.query.get(session['active_db_id'])
+                if db_chat:
+                    db_chat.history = json.dumps(current_history)
+                    db.session.commit()
 
         except Exception as e:
             yield f"Error: Could not get response from AI: {e}".encode('utf-8')
 
-    return Response(generate(), content_type='text/plain; charset=utf-8')
+    return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
 
 @app.route('/api/unlock_roleplay', methods=['POST'])
 def unlock_roleplay():
@@ -315,6 +351,54 @@ def unlock_roleplay():
         return jsonify(user.to_dict())
     else:
         return jsonify({"error": f"Requires {ROLEPLAY_CHATS_REQUIRED} chats sent."}), 400
+
+@app.route('/api/roleplay/sessions', methods=['GET'])
+def get_roleplay_sessions():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    # Get sessions ordered by newest first
+    chats = ChatSession.query.filter_by(user_id=session['user_id']).order_by(ChatSession.timestamp.desc()).all()
+    results = []
+    for c in chats:
+        results.append({
+            "id": c.id,
+            "name": c.name,
+            "scenario": c.scenario[:50] + "..." if len(c.scenario) > 50 else c.scenario,
+            "timestamp": c.timestamp.isoformat()
+        })
+    return jsonify(results)
+
+@app.route('/api/roleplay/load', methods=['POST'])
+def load_roleplay_session():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    data = request.get_json()
+    chat_id = data.get('id')
+    chat = ChatSession.query.filter_by(id=chat_id, user_id=session['user_id']).first()
+    
+    if not chat:
+        return jsonify({"error": "Chat not found"}), 404
+
+    # Restore to memory
+    new_session_id = os.urandom(16).hex()
+    session['chat_session_id'] = new_session_id
+    session['active_db_id'] = chat.id
+    
+    try:
+        history = json.loads(chat.history)
+    except:
+        history = []
+
+    CHAT_SESSIONS[new_session_id] = history
+    
+    # Return the last message to display as context
+    last_msg = ""
+    if history:
+        last_msg = history[-1]['content']
+
+    return jsonify({"message": "Loaded", "last_message": last_msg})
 
 @app.route('/api/roleplay/start', methods=['POST'])
 def start_roleplay():
@@ -337,8 +421,11 @@ def start_roleplay():
         f"\n\n[ROLEPLAY SCENARIO]\n"
         f"User Character: {user_name} ({user_gender})\n"
         f"Scenario: {scenario}\n"
-        f"Instructions: Stay strictly in character. Engage with the user's scenario immediately. "
-        f"Do not break the fourth wall. Do not act as an assistant, act as the character in the scenario."
+        f"IMPORTANT INSTRUCTIONS:\n"
+        f"1. You are roleplaying *against* {user_name}. You are NOT {user_name}.\n"
+        f"2. Write ONLY from the perspective of your character (the counterpart). NEVER write {user_name}'s actions, thoughts, or dialogue.\n"
+        f"3. Focus on action and dialogue. Avoid excessive flowery description or irrelevant details.\n"
+        f"4. Drive the interaction forward with your actions. Do not break character."
     )
     
     system_message = base_prompt + roleplay_context
@@ -354,9 +441,10 @@ def start_roleplay():
             "Content-Type": "application/json"
         }
         # Ask AI to start the scene based on the context
+        starter_prompt = f"Start the roleplay based on: {scenario}. Set the scene briefly and take the first action towards {user_name}. Remember: do not act as {user_name}."
         startup_payload = {
             "model": "qwen/qwen3-32b",
-            "messages": history + [{"role": "user", "content": f"Start the roleplay now based on the scenario: {scenario}. Write exactly 2 short paragraphs to set the scene."}],
+            "messages": history + [{"role": "user", "content": starter_prompt}],
             "max_tokens": 4000
         }
         
@@ -367,9 +455,21 @@ def start_roleplay():
         if not ai_opener:
             ai_opener = "Scenario initialized. (No output generated)"
         
-        # Save to history so the chat can continue from here
+        # Save to history so the chat can continue from here (including the trigger prompt)
+        history.append({"role": "user", "content": starter_prompt})
         history.append({"role": "assistant", "content": ai_opener})
         CHAT_SESSIONS[session_id] = history
+
+        # --- Save to DB ---
+        new_chat = ChatSession(
+            user_id=session['user_id'],
+            name=user_name,
+            scenario=scenario,
+            history=json.dumps(history)
+        )
+        db.session.add(new_chat)
+        db.session.commit()
+        session['active_db_id'] = new_chat.id
         
         return jsonify({"message": "Roleplay started.", "opener": ai_opener})
 

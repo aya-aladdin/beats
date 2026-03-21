@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const inputWrapper = document.getElementById('input-wrapper');
     const terminal = document.getElementById('terminal');
     const hiddenInput = document.getElementById('hidden-input');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarContent = document.getElementById('sidebar-content');
 
     // --- State Management ---
     let state = {
@@ -243,6 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     state.appState = 'roleplay_setup';
                     state.subState = 'name';
                     clearScreen();
+                    await updateSidebar(); // Show saved chats sidebar
                     await type("=== ROLEPLAY SETUP ===");
                     await type("Enter your character's name:");
                 } else {
@@ -308,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await type("AI Chat Interface. Type 'exit' to return to menu.");
             return;
         }
-        await fetchAIResponse(command);
+        await fetchAIResponse(command, false, null);
     }
 
     async function handleRoleplaySetup(command) {
@@ -347,10 +350,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     if (response.ok) {
                         state.appState = 'chat';
+                        sidebar.classList.add('hidden'); // Hide sidebar on start
                         clearScreen();
                         await type("=== ROLEPLAY STARTED ===");
-                        // Use parseMarkdown to ensure formatting (bold/italic) works in the opener
-                        createChatBubble(parseMarkdown(data.opener), 'ai');
+                        
+                        // Create bubble with roleplay opener and attach version info
+                        const bubble = createChatBubble(data.opener, 'ai');
+                        updateBubbleControls(bubble);
                     } else {
                         await type(`Error: ${data.error}`);
                         await new Promise(r => setTimeout(r, 2000));
@@ -360,6 +366,62 @@ document.addEventListener('DOMContentLoaded', () => {
                     await type(`Connection Error: ${e.message}`);
                 }
                 break;
+        }
+    }
+
+    async function updateSidebar() {
+        try {
+            const response = await fetch('/api/roleplay/sessions');
+            if (!response.ok) return; // If guest or error, just don't show sidebar
+            
+            const sessions = await response.json();
+            sidebarContent.innerHTML = '';
+            
+            if (sessions.length > 0) {
+                sidebar.classList.remove('hidden');
+                
+                const header = document.createElement('div');
+                header.className = "text-xs mb-2 text-gray-500 italic";
+                header.textContent = "Click a session to resume";
+                sidebarContent.appendChild(header);
+
+                sessions.forEach(session => {
+                    const div = document.createElement('div');
+                    div.className = 'sidebar-item';
+                    div.innerHTML = `
+                        <div class="sidebar-date">${new Date(session.timestamp).toLocaleDateString()}</div>
+                        <div class="sidebar-name">${session.name || 'Unknown'}</div>
+                        <div class="truncate">${session.scenario}</div>
+                    `;
+                    div.onclick = () => loadRoleplaySession(session.id);
+                    sidebarContent.appendChild(div);
+                });
+            }
+        } catch (e) {
+            console.error("Failed to load sessions", e);
+        }
+    }
+
+    async function loadRoleplaySession(id) {
+        await type("\nLoading saved session...");
+        try {
+            const response = await fetch('/api/roleplay/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                state.appState = 'chat';
+                sidebar.classList.add('hidden');
+                clearScreen();
+                await type("=== SESSION RESTORED ===");
+                // Show last message as context
+                const bubble = createChatBubble(data.last_message, 'ai');
+                updateBubbleControls(bubble);
+            }
+        } catch (e) {
+            await type(`Error loading session: ${e.message}`);
         }
     }
 
@@ -600,8 +662,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
     };
 
-    const fetchAIResponse = async (prompt) => {
-        const responseElement = createChatBubble('', 'ai');
+    const fetchAIResponse = async (prompt, isRegen = false, targetBubble = null) => {
+        const responseElement = targetBubble || createChatBubble('', 'ai');
         state.abortController = new AbortController();
         let fullResponse = "";
 
@@ -610,8 +672,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    prompt,
-                    persona: state.currentUser?.persona // Send current persona for guest users
+                    prompt: isRegen ? null : prompt,
+                    regenerate: isRegen,
+                    persona: state.currentUser?.persona
                 }),
                 signal: state.abortController.signal,
             });
@@ -629,9 +692,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 const chunk = decoder.decode(value, { stream: true });
                 
                 fullResponse += chunk;
-                responseElement.innerHTML = parseMarkdown(fullResponse);
+                
+                // Update the content div inside the bubble
+                const contentDiv = responseElement.querySelector('.msg-content');
+                if (contentDiv) contentDiv.innerHTML = parseMarkdown(fullResponse);
+                
                 terminal.scrollTop = terminal.scrollHeight;
             }
+            
+            // After streaming is done, save the version
+            if (!responseElement.versions) {
+                responseElement.versions = [];
+                responseElement.currentVersion = -1;
+            }
+            
+            responseElement.versions.push(fullResponse);
+            responseElement.currentVersion = responseElement.versions.length - 1;
+            updateBubbleControls(responseElement);
+            
             await updateUserStats(); // Let the backend be the source of truth
 
         } catch (error) {
@@ -730,10 +808,77 @@ document.addEventListener('DOMContentLoaded', () => {
         const div = document.createElement('div');
         div.classList.add('message-bubble');
         div.classList.add(sender === 'user' ? 'message-user' : 'message-ai');
-        div.innerHTML = text; 
+        
+        // Inner container for text
+        const contentDiv = document.createElement('div');
+        contentDiv.classList.add('msg-content');
+        contentDiv.innerHTML = parseMarkdown(text);
+        div.appendChild(contentDiv);
+
+        // Init versions array for AI messages
+        if (sender === 'ai') {
+            div.versions = text ? [text] : []; // If created with text (like RP opener), store it
+            div.currentVersion = 0;
+        }
+
         output.appendChild(div);
         terminal.scrollTop = terminal.scrollHeight;
         return div;
+    };
+
+    const updateBubbleControls = (bubble) => {
+        // Remove existing controls
+        const existing = bubble.querySelector('.message-controls');
+        if (existing) existing.remove();
+
+        const controls = document.createElement('div');
+        controls.classList.add('message-controls');
+        
+        // Navigation (< 1/3 >)
+        if (bubble.versions.length > 1) {
+            const prevBtn = document.createElement('span');
+            prevBtn.className = 'control-btn';
+            prevBtn.innerHTML = '&lt;';
+            prevBtn.onclick = () => switchVersion(bubble, -1);
+            
+            const count = document.createElement('span');
+            count.className = 'mx-2';
+            count.innerText = `${bubble.currentVersion + 1}/${bubble.versions.length}`;
+            
+            const nextBtn = document.createElement('span');
+            nextBtn.className = 'control-btn';
+            nextBtn.innerHTML = '&gt;';
+            nextBtn.onclick = () => switchVersion(bubble, 1);
+
+            controls.appendChild(prevBtn);
+            controls.appendChild(count);
+            controls.appendChild(nextBtn);
+        }
+
+        // Regenerate Button
+        const regenBtn = document.createElement('span');
+        regenBtn.className = 'control-btn ml-2';
+        regenBtn.innerHTML = '[Regenerate]';
+        regenBtn.onclick = () => fetchAIResponse(null, true, bubble);
+        
+        controls.appendChild(regenBtn);
+        bubble.appendChild(controls);
+    };
+
+    const switchVersion = async (bubble, direction) => {
+        const newIndex = bubble.currentVersion + direction;
+        if (newIndex >= 0 && newIndex < bubble.versions.length) {
+            bubble.currentVersion = newIndex;
+            bubble.querySelector('.msg-content').innerHTML = parseMarkdown(bubble.versions[newIndex]);
+            updateBubbleControls(bubble);
+            
+            // Sync with backend
+            await fetch('/api/chat/update_history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: bubble.versions[newIndex] })
+            });
+        }
     };
 
     const clearScreen = () => {
