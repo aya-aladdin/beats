@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- State Management ---
     let state = {
-        appState: 'login', // login, menu, chat, profile, beats, persona, settings
+        appState: 'login', // login, menu, chat, profile, beats, persona, settings, roleplay_setup
         subState: 'prompt', // For multi-step inputs like username/password
         tempData: {}, // To hold username during login flow
         isExecuting: false,
@@ -61,43 +61,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const processCommand = async (command) => {
         state.isExecuting = true;
-        // --- CHANGE 1: Immediate Input Clearing ---
-        // Capture the command and clear the input line visually and from state *before* processing.
-        const commandToProcess = command;
-        state.currentInput = "";
-        inputLine.textContent = "";
-        // Clear menu options on new command to reset navigation
-        state.menuOptions = [];
-        state.menuSelectionIndex = -1;
+        try {
+            // --- CHANGE 1: Immediate Input Clearing ---
+            // Capture the command and clear the input line visually and from state *before* processing.
+            const commandToProcess = command;
+            state.currentInput = "";
+            inputLine.textContent = "";
+            // Clear menu options on new command to reset navigation
+            state.menuOptions = [];
+            state.menuSelectionIndex = -1;
 
-        const displayCommand = (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) ? command.replace(/./g, '*') : command;
-        
-        if (state.appState === 'chat') {
-            createChatBubble(displayCommand, 'user');
-        } else {
-            addToOutput(`${PROMPT} ${displayCommand}`); // Show the processed command in the output
-        }
+            const displayCommand = (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) ? command.replace(/./g, '*') : command;
+            
+            if (state.appState === 'chat') {
+                createChatBubble(displayCommand, 'user');
+            } else {
+                addToOutput(`${PROMPT} ${displayCommand}`); // Show the processed command in the output
+            }
 
-        if (commandToProcess.trim() !== '' && state.appState === 'chat') {
-            state.commandHistory.unshift(commandToProcess);
-            state.historyIndex = -1;
-        }
-        
-        // State-based command processing
-        switch (state.appState) {
-            case 'login': await handleLogin(commandToProcess); break;
-            case 'menu': await handleMenu(commandToProcess); break;
-            case 'chat': await handleChat(commandToProcess); break;
-            case 'profile': await handleProfile(commandToProcess); break;
-            case 'beats': await handleBeats(commandToProcess); break;
-            case 'persona': await handlePersona(commandToProcess); break;
-            case 'settings': await handleSettings(commandToProcess); break; // New handler
-            case 'accessibility': await handleAccessibility(commandToProcess); break;
-            case 'set_ai_name': await handleSetAiName(commandToProcess); break;
-        }
-        state.isExecuting = false;
-        if (state.appState !== 'login' || state.subState === 'prompt') {
-             inputWrapper.style.display = 'flex';
+            if (commandToProcess.trim() !== '' && state.appState === 'chat') {
+                state.commandHistory.unshift(commandToProcess);
+                state.historyIndex = -1;
+            }
+            
+            // State-based command processing
+            switch (state.appState) {
+                case 'login': await handleLogin(commandToProcess); break;
+                case 'menu': await handleMenu(commandToProcess); break;
+                case 'chat': await handleChat(commandToProcess); break;
+                case 'profile': await handleProfile(commandToProcess); break;
+                case 'beats': await handleBeats(commandToProcess); break;
+                case 'persona': await handlePersona(commandToProcess); break;
+                case 'settings': await handleSettings(commandToProcess); break; // New handler
+                case 'accessibility': await handleAccessibility(commandToProcess); break;
+                case 'roleplay_setup': await handleRoleplaySetup(commandToProcess); break;
+                case 'set_ai_name': await handleSetAiName(commandToProcess); break;
+            }
+        } catch (error) {
+            await type(`\nError executing command: ${error.message}`);
+            console.error(error);
+        } finally {
+            state.isExecuting = false;
+            if (state.appState !== 'login' || state.subState === 'prompt') {
+                inputWrapper.style.display = 'flex';
+            }
         }
     };
 
@@ -160,7 +167,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     await new Promise(r => setTimeout(r, 1000));
                     await showMainMenu();
                 } else {
-                    await type("Login failed. Invalid credentials.");
+                    // Handle non-JSON errors (like 500 server error)
+                    let msg = "Login failed.";
+                    try {
+                        const err = await loginResponse.json();
+                        msg += ` ${err.error}`;
+                    } catch (e) {
+                        msg += ` (Server Error: ${loginResponse.status})`;
+                    }
+                    await type(msg);
                     await new Promise(r => setTimeout(r, 1000));
                     await showLoginScreen();
                 }
@@ -186,8 +201,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     await new Promise(r => setTimeout(r, 1000));
                     await showMainMenu();
                 } else {
-                    const error = await registerResponse.json();
-                    await type(`Registration failed: ${error.error}`);
+                    let msg = "Registration failed:";
+                    try {
+                        const error = await registerResponse.json();
+                        msg += ` ${error.error}`;
+                    } catch (e) {
+                        msg += ` (Server Error: ${registerResponse.status})`;
+                    }
+                    await type(msg);
                     await new Promise(r => setTimeout(r, 1000));
                     await showLoginScreen();
                 }
@@ -219,10 +240,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case '2':
                 if (state.currentUser?.roleplay_unlocked) {
-                    state.appState = 'chat';
+                    state.appState = 'roleplay_setup';
+                    state.subState = 'name';
                     clearScreen();
-                    await type("Roleplay Mode Engaged. The AI is now more receptive to narrative scenarios.");
-                    await type("Type 'exit' to return to menu.");
+                    await type("=== ROLEPLAY SETUP ===");
+                    await type("Enter your character's name:");
                 } else {
                     await type("Roleplay Mode is LOCKED. 🔒\nUnlock this feature from the 'Beats & Upgrades' menu.");
                 }
@@ -287,6 +309,58 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         await fetchAIResponse(command);
+    }
+
+    async function handleRoleplaySetup(command) {
+        if (command.toLowerCase() === 'exit') {
+            await showMainMenu();
+            return;
+        }
+        
+        switch (state.subState) {
+            case 'name':
+                state.tempData.rp_name = command;
+                state.subState = 'gender';
+                await type("Enter your character's gender:");
+                break;
+            case 'gender':
+                state.tempData.rp_gender = command;
+                state.subState = 'scenario';
+                await type("Describe the scenario/idea (be specific):");
+                break;
+            case 'scenario':
+                state.tempData.rp_scenario = command;
+                await type("\nInitializing Scenario...");
+                
+                try {
+                    const response = await fetch('/api/roleplay/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_name: state.tempData.rp_name,
+                            user_gender: state.tempData.rp_gender,
+                            scenario: state.tempData.rp_scenario
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        state.appState = 'chat';
+                        clearScreen();
+                        await type("=== ROLEPLAY STARTED ===");
+                        // Use parseMarkdown to ensure formatting (bold/italic) works in the opener
+                        createChatBubble(parseMarkdown(data.opener), 'ai');
+                    } else {
+                        await type(`Error: ${data.error}`);
+                        await new Promise(r => setTimeout(r, 2000));
+                        await showMainMenu();
+                    }
+                } catch (e) {
+                    await type(`Connection Error: ${e.message}`);
+                }
+                break;
+        }
     }
 
     async function handleProfile(command) {

@@ -3,6 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 import requests
 import json
+from sqlalchemy import text
 import os
 from dotenv import load_dotenv
 
@@ -308,7 +309,100 @@ def unlock_roleplay():
     else:
         return jsonify({"error": f"Requires {ROLEPLAY_CHATS_REQUIRED} chats sent."}), 400
 
+@app.route('/api/roleplay/start', methods=['POST'])
+def start_roleplay():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+
+    data = request.get_json()
+    user_name = data.get('user_name')
+    user_gender = data.get('user_gender')
+    scenario = data.get('scenario')
+
+    # Reset Chat History for the new roleplay
+    if 'chat_session_id' not in session:
+        session['chat_session_id'] = os.urandom(16).hex()
+    session_id = session['chat_session_id']
+
+    # Build System Prompt with Roleplay Context
+    base_prompt = get_current_persona_prompt()
+    roleplay_context = (
+        f"\n\n[ROLEPLAY SCENARIO]\n"
+        f"User Character: {user_name} ({user_gender})\n"
+        f"Scenario: {scenario}\n"
+        f"Instructions: Stay strictly in character. Engage with the user's scenario immediately. "
+        f"Do not break the fourth wall. Do not act as an assistant, act as the character in the scenario."
+    )
+    
+    system_message = base_prompt + roleplay_context
+    
+    # Initialize History
+    history = [{"role": "system", "content": system_message}]
+    
+    # Generate Opening Line from AI
+    try:
+        url = "https://ai.hackclub.com/proxy/v1/chat/completions"
+        headers = {
+            "Authorization": "Bearer sk-hc-v1-aad18691f5b94ed8ae959cdbaf95600ea2df3328179a449097e83188c5183a91",
+            "Content-Type": "application/json"
+        }
+        # Ask AI to start the scene based on the context
+        startup_payload = {
+            "model": "qwen/qwen3-32b",
+            "messages": history + [{"role": "user", "content": f"Start the roleplay now based on the scenario: {scenario}"}],
+            "max_tokens": 300
+        }
+        
+        response = requests.post(url, headers=headers, json=startup_payload)
+        response_json = response.json()
+        ai_opener = response_json['choices'][0]['message']['content']
+        
+        # Save to history so the chat can continue from here
+        history.append({"role": "assistant", "content": ai_opener})
+        CHAT_SESSIONS[session_id] = history
+        
+        return jsonify({"message": "Roleplay started.", "opener": ai_opener})
+
+    except Exception as e:
+        # Fallback if AI fails to generate opener
+        fallback = "Scenario initialized. Ready for your input."
+        history.append({"role": "assistant", "content": fallback})
+        CHAT_SESSIONS[session_id] = history
+        return jsonify({"message": "Roleplay initialized.", "opener": fallback})
+
+def check_and_migrate_db():
+    """Adds new columns to the database if they are missing (Simple Migration)."""
+    try:
+        with app.app_context():
+            with db.engine.connect() as conn:
+                # Check and add font_size
+                try:
+                    conn.execute(text("SELECT font_size FROM user LIMIT 1"))
+                except Exception:
+                    print("Migrating DB: Adding font_size column...")
+                    conn.execute(text("ALTER TABLE user ADD COLUMN font_size VARCHAR(20) DEFAULT 'normal'"))
+                    conn.commit() # Ensure changes are saved
+
+                # Check and add theme
+                try:
+                    conn.execute(text("SELECT theme FROM user LIMIT 1"))
+                except Exception:
+                    print("Migrating DB: Adding theme column...")
+                    conn.execute(text("ALTER TABLE user ADD COLUMN theme VARCHAR(20) DEFAULT 'default'"))
+                    conn.commit()
+
+                # Check and add response_length
+                try:
+                    conn.execute(text("SELECT response_length FROM user LIMIT 1"))
+                except Exception:
+                    print("Migrating DB: Adding response_length column...")
+                    conn.execute(text("ALTER TABLE user ADD COLUMN response_length VARCHAR(20) DEFAULT 'balanced'"))
+                    conn.commit()
+    except Exception as e:
+        print(f"Migration Warning: {e}")
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        check_and_migrate_db() # Run migration check
     app.run(debug=True)
