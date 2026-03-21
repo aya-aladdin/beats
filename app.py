@@ -393,12 +393,7 @@ def load_roleplay_session():
 
     CHAT_SESSIONS[new_session_id] = history
     
-    # Return the last message to display as context
-    last_msg = ""
-    if history:
-        last_msg = history[-1]['content']
-
-    return jsonify({"message": "Loaded", "last_message": last_msg})
+    return jsonify({"message": "Loaded", "history": history})
 
 @app.route('/api/roleplay/start', methods=['POST'])
 def start_roleplay():

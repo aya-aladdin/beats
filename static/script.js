@@ -416,9 +416,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 sidebar.classList.add('hidden');
                 clearScreen();
                 await type("=== SESSION RESTORED ===");
-                // Show last message as context
-                const bubble = createChatBubble(data.last_message, 'ai');
-                updateBubbleControls(bubble);
+                
+                // Reconstruct full history
+                if (data.history) {
+                    data.history.forEach(msg => {
+                        if (msg.role === 'user') {
+                            createChatBubble(msg.content, 'user');
+                        } else if (msg.role === 'assistant') {
+                            const bubble = createChatBubble(msg.content, 'ai');
+                            updateBubbleControls(bubble);
+                        }
+                    });
+                }
             }
         } catch (e) {
             await type(`Error loading session: ${e.message}`);
@@ -903,6 +912,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 inputLine.textContent = state.currentInput;
             }
+            terminal.scrollTop = terminal.scrollHeight;
         }
     });
 
@@ -981,6 +991,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             inputLine.textContent = state.currentInput;
         }
+        terminal.scrollTop = terminal.scrollHeight;
     });
 
     // --- Initial Boot Sequence ---
