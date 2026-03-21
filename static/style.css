@@ -105,6 +105,26 @@ body {
     border-radius: 0.25rem;
 }
 
+/* --- Interactive Menu Options --- */
+.menu-option {
+    cursor: pointer;
+    padding: 2px 4px;
+    display: inline-block;
+    width: 100%;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+.menu-option:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.menu-option.selected {
+    background-color: var(--prompt-color);
+    color: var(--bg-color);
+    font-weight: bold;
+}
+
 /* Default theme: light grey/white on black */
 /* body { color: #E0E0E0; } */
 #terminal .text-cyan-400 { color: var(--prompt-color); } /* Prompt symbol */

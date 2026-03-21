@@ -16,6 +16,9 @@ document.addEventListener('DOMContentLoaded', () => {
         historyIndex: -1,
         currentInput: "",
         abortController: new AbortController(),
+        // Accessibility & Navigation
+        menuOptions: [], // Array of { key, element, action }
+        menuSelectionIndex: -1,
     };
 
     const PROMPT = `&gt;`;
@@ -39,6 +42,23 @@ document.addEventListener('DOMContentLoaded', () => {
         return element;
     };
 
+    // Helper to print a clickable/selectable menu option
+    const printMenuOption = async (key, text, action) => {
+        const div = document.createElement('div');
+        div.classList.add('menu-option');
+        div.innerHTML = text;
+        div.onclick = () => {
+            inputLine.textContent = key; // Visual feedback
+            processCommand(key);
+        };
+        output.appendChild(div);
+        terminal.scrollTop = terminal.scrollHeight;
+        
+        // Register for keyboard navigation
+        state.menuOptions.push({ key, element: div, action: () => processCommand(key) });
+        await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for effect
+    };
+
     const processCommand = async (command) => {
         state.isExecuting = true;
         // --- CHANGE 1: Immediate Input Clearing ---
@@ -46,6 +66,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const commandToProcess = command;
         state.currentInput = "";
         inputLine.textContent = "";
+        // Clear menu options on new command to reset navigation
+        state.menuOptions = [];
+        state.menuSelectionIndex = -1;
 
         const displayCommand = (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) ? command.replace(/./g, '*') : command;
         
@@ -69,6 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'beats': await handleBeats(commandToProcess); break;
             case 'persona': await handlePersona(commandToProcess); break;
             case 'settings': await handleSettings(commandToProcess); break; // New handler
+            case 'accessibility': await handleAccessibility(commandToProcess); break;
             case 'set_ai_name': await handleSetAiName(commandToProcess); break;
         }
         state.isExecuting = false;
@@ -86,9 +110,9 @@ document.addEventListener('DOMContentLoaded', () => {
         clearScreen();
         await type("Welcome back, operator.");
         await type("Login as:");
-        await type("[1] Guest");
-        await type("[2] Registered User");
-        await type("[3] Create New User");
+        await printMenuOption("1", "[1] Guest");
+        await printMenuOption("2", "[2] Registered User");
+        await printMenuOption("3", "[3] Create New User");
     }
 
     async function handleLogin(command) {
@@ -96,8 +120,11 @@ document.addEventListener('DOMContentLoaded', () => {
         switch (state.subState) {
             case 'prompt':
                 if (choice === '1') { // Guest
-                    state.currentUser = { username: 'Guest', chats_sent: 0, beats: 0, roleplay_unlocked: false, persona: 'helpful', ai_name: 'AI', roleplay_chats_required: 3 };
+                    // Initialize default guest settings
+                    state.currentUser = { username: 'Guest', chats_sent: 0, beats: 0, roleplay_unlocked: false, persona: 'helpful', ai_name: 'AI', roleplay_chats_required: 3, theme: 'default', font_size: 'normal', response_length: 'balanced' };
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser)); // Save guest session
+                    applyPreferences();
+
                     await type("\nAccess Granted. Welcome, Guest.");
                     await type("Loading main interface...");
                     await new Promise(r => setTimeout(r, 1000));
@@ -127,6 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (loginResponse.ok) {
                     state.currentUser = await loginResponse.json();
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+                    applyPreferences();
                     await type("\nAccess Granted.");
                     await type("Loading main interface...");
                     await new Promise(r => setTimeout(r, 1000));
@@ -152,6 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
                  if (registerResponse.ok) {
                     state.currentUser = await registerResponse.json();
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+                    applyPreferences();
                     await type("\nUser created. Access Granted.");
                     await type("Loading main interface...");
                     await new Promise(r => setTimeout(r, 1000));
@@ -172,12 +201,12 @@ document.addEventListener('DOMContentLoaded', () => {
         clearScreen();
         const roleplayStatus = state.currentUser?.roleplay_unlocked ? "UNLOCKED ✅" : "LOCKED 🔒";
         await type("=== MAIN MENU ===");
-        await type("[1] Talk to AI");
-        await type(`[2] Roleplay Mode (${roleplayStatus})`);
-        await type("[3] Beats & Upgrades");
-        await type("[4] Settings"); // Renamed from "Persona Settings"
-        await type("[5] Profile Stats");
-        await type("[6] Exit");
+        await printMenuOption("1", "[1] Talk to AI");
+        await printMenuOption("2", `[2] Roleplay Mode (${roleplayStatus})`);
+        await printMenuOption("3", "[3] Beats & Upgrades");
+        await printMenuOption("4", "[4] Settings"); // Renamed from "Persona Settings"
+        await printMenuOption("5", "[5] Profile Stats");
+        await printMenuOption("6", "[6] Exit");
     }
 
     async function handleMenu(command) {
@@ -206,9 +235,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type(`Current Chats Sent: ${state.currentUser?.chats_sent || 0}`);
                 await type("\nAvailable Upgrades:");
                 if (state.currentUser?.roleplay_unlocked) {
-                    await type("[1] Roleplay Mode (UNLOCKED)");
+                    await printMenuOption("1", "[1] Roleplay Mode (UNLOCKED)");
                 } else {
-                    await type(`[1] Unlock Roleplay Mode (Requires: ${roleplayChatsRequired} Chats)`);
+                    await printMenuOption("1", `[1] Unlock Roleplay Mode (Requires: ${roleplayChatsRequired} Chats)`);
                 }
                 await type("\nType a number to purchase or 'exit' to return.");
                 break;
@@ -287,10 +316,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function showSettingsMenu() {
         await type("=== SETTINGS ===");
-        await type("[1] Persona Settings");
-        await type(`[2] Change AI Name (Current: ${state.currentUser?.ai_name || 'AI'})`);
-        await type("[3] Accessibility");
-        await type("\nType 'exit' to return to the main menu.");
+        await printMenuOption("1", "[1] Persona Settings");
+        await printMenuOption("2", `[2] Change AI Name (Current: ${state.currentUser?.ai_name || 'AI'})`);
+        await printMenuOption("3", "[3] Accessibility (Size, Theme, Length)");
+        await type("\nType a number, use arrow keys, or 'exit'.");
     }
 
     async function handleSettings(command) {
@@ -302,10 +331,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type("Select a persona for Aya:");
                 // --- CHANGE 2: Indicate Selected Persona ---
                 const currentPersona = state.currentUser?.persona;
-                await type(`[1] Helpful Assistant ${currentPersona === 'helpful' ? '(Selected)' : ''}`);
-                await type(`[2] Cocky Genius ${currentPersona === 'cocky' ? '(Selected)' : ''}`);
-                await type(`[3] Shy Prodigy ${currentPersona === 'shy' ? '(Selected)' : ''}`);
-                await type("\nType a number to select or 'exit' to return.");
+                await printMenuOption("1", `[1] Helpful Assistant ${currentPersona === 'helpful' ? '(Selected)' : ''}`);
+                await printMenuOption("2", `[2] Cocky Genius ${currentPersona === 'cocky' ? '(Selected)' : ''}`);
+                await printMenuOption("3", `[3] Shy Prodigy ${currentPersona === 'shy' ? '(Selected)' : ''}`);
+                await type("\nSelect with number/mouse/arrows or 'exit'.");
                 break;
             case '2':
                 if (state.currentUser.username === 'Guest') {
@@ -316,11 +345,72 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type("Enter a new name for the AI (1-20 characters):");
                 break;
             case '3':
-                await type("\nAccessibility options are not yet implemented.");
+                state.appState = 'accessibility';
+                clearScreen();
+                await showAccessibilityMenu();
                 break;
             case 'exit':
                 await showMainMenu();
                 break;
+        }
+    }
+
+    async function showAccessibilityMenu() {
+        const user = state.currentUser || {};
+        const size = user.font_size || 'normal';
+        const theme = user.theme || 'default';
+        const len = user.response_length || 'balanced';
+
+        await type("=== ACCESSIBILITY ===");
+        await type("Adjust visual and interaction settings.");
+        
+        await type("\n--- Font Size ---");
+        await printMenuOption("1", `[1] Small ${size === 'small' ? '✅' : ''}`);
+        await printMenuOption("2", `[2] Normal ${size === 'normal' ? '✅' : ''}`);
+        await printMenuOption("3", `[3] Large ${size === 'large' ? '✅' : ''}`);
+
+        await type("\n--- Theme ---");
+        await printMenuOption("4", `[4] Default (White/Black) ${theme === 'default' ? '✅' : ''}`);
+        await printMenuOption("5", `[5] Hacker Green ${theme === 'green' ? '✅' : ''}`);
+        await printMenuOption("6", `[6] Amber Retro ${theme === 'amber' ? '✅' : ''}`);
+        await printMenuOption("7", `[7] Solarized Dark ${theme === 'solarized-dark' ? '✅' : ''}`);
+
+        await type("\n--- AI Response Length ---");
+        await printMenuOption("8", `[8] Concise (~150 words) ${len === 'concise' ? '✅' : ''}`);
+        await printMenuOption("9", `[9] Balanced (~500 words) ${len === 'balanced' ? '✅' : ''}`);
+        await printMenuOption("0", `[0] Verbose (~2000 words) ${len === 'verbose' ? '✅' : ''}`);
+
+        await type("\nType 'exit' to return to Settings.");
+    }
+
+    async function handleAccessibility(command) {
+        const choice = command.trim().toLowerCase();
+        let updates = {};
+
+        if (choice === 'exit') {
+            state.appState = 'settings';
+            clearScreen();
+            await showSettingsMenu();
+            return;
+        }
+
+        if (choice === '1') updates.font_size = 'small';
+        else if (choice === '2') updates.font_size = 'normal';
+        else if (choice === '3') updates.font_size = 'large';
+        else if (choice === '4') updates.theme = 'default';
+        else if (choice === '5') updates.theme = 'green';
+        else if (choice === '6') updates.theme = 'amber';
+        else if (choice === '7') updates.theme = 'solarized-dark';
+        else if (choice === '8') updates.response_length = 'concise';
+        else if (choice === '9') updates.response_length = 'balanced';
+        else if (choice === '0') updates.response_length = 'verbose';
+
+        if (Object.keys(updates).length > 0) {
+            await updatePreferences(updates);
+            clearScreen();
+            await showAccessibilityMenu(); // Refresh to show checkmarks
+        } else {
+            await type("Invalid selection.");
         }
     }
 
@@ -517,6 +607,37 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function updatePreferences(updates) {
+        // Mix into current local state
+        state.currentUser = { ...state.currentUser, ...updates };
+        
+        // Apply visual changes immediately
+        applyPreferences();
+
+        // Save to LocalStorage
+        localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+
+        // Sync with backend if logged in
+        if (state.currentUser.username !== 'Guest') {
+            try {
+                await fetch('/api/update_preferences', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates)
+                });
+            } catch (e) {
+                console.error("Failed to sync preferences", e);
+            }
+        }
+    }
+
+    function applyPreferences() {
+        const user = state.currentUser || {};
+        document.body.className = "bg-black"; // Reset base
+        if (user.theme && user.theme !== 'default') document.body.classList.add(`theme-${user.theme}`);
+        if (user.font_size) document.body.classList.add(`font-size-${user.font_size}`);
+    }
+
     const addToOutput = (html) => {
         const div = document.createElement('div');
         div.innerHTML = html;
@@ -555,26 +676,61 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (e.key === 'Enter') {
+            // Check if we have a selected menu option via arrows
+            if (state.menuOptions.length > 0 && state.menuSelectionIndex !== -1) {
+                const selected = state.menuOptions[state.menuSelectionIndex];
+                if (selected) {
+                     // Visual confirm
+                    inputLine.textContent = selected.key;
+                    selected.action();
+                    return;
+                }
+            }
             // Allow empty commands for menu navigation
             if (state.currentInput.trim() || state.appState !== 'chat') {
                 processCommand(state.currentInput);
             }
         } else if (e.key === 'Backspace') {
             state.currentInput = state.currentInput.slice(0, -1);
-        } else if (e.key === 'ArrowUp' && state.appState === 'chat') {
+        } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            if (state.historyIndex < state.commandHistory.length - 1) {
-                state.historyIndex++;
-                state.currentInput = state.commandHistory[state.historyIndex];
+            if (state.menuOptions.length > 0) {
+                // Menu Navigation
+                if (state.menuSelectionIndex < 0) state.menuSelectionIndex = state.menuOptions.length;
+                const prevIndex = state.menuSelectionIndex;
+                state.menuSelectionIndex = Math.max(0, state.menuSelectionIndex - 1);
+                
+                // Update visual highlight
+                if (prevIndex >= 0 && prevIndex < state.menuOptions.length) state.menuOptions[prevIndex].element.classList.remove('selected');
+                state.menuOptions[state.menuSelectionIndex].element.classList.add('selected');
+                
+            } else if (state.appState === 'chat') {
+                // Chat History
+                if (state.historyIndex < state.commandHistory.length - 1) {
+                    state.historyIndex++;
+                    state.currentInput = state.commandHistory[state.historyIndex];
+                }
             }
-        } else if (e.key === 'ArrowDown' && state.appState === 'chat') {
+        } else if (e.key === 'ArrowDown') {
             e.preventDefault();
-            if (state.historyIndex >= 0) { // Allow going to -1
-                state.historyIndex--;
-                state.currentInput = state.commandHistory[state.historyIndex];
-            } else {
-                state.historyIndex = -1;
-                state.currentInput = "";
+            if (state.menuOptions.length > 0) {
+                // Menu Navigation
+                const prevIndex = state.menuSelectionIndex;
+                state.menuSelectionIndex = Math.min(state.menuOptions.length - 1, state.menuSelectionIndex + 1);
+
+                // Update visual highlight
+                if (prevIndex >= 0) state.menuOptions[prevIndex].element.classList.remove('selected');
+                state.menuOptions[state.menuSelectionIndex].element.classList.add('selected');
+
+            } else if (state.appState === 'chat') {
+                 // Chat History
+                if (state.historyIndex >= 0) { // Allow going to -1
+                    state.historyIndex--;
+                    state.currentInput = state.commandHistory[state.historyIndex];
+                } else {
+                    state.historyIndex = -1;
+                    state.currentInput = "";
+                }
             }
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
             state.currentInput += e.key;
@@ -608,6 +764,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.ok) {
                     // Server session is valid, get the latest data
                     state.currentUser = await response.json();
+                    applyPreferences();
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                     await type("Server sync complete. Session restored. ✅");
                     await new Promise(r => setTimeout(r, 1000));
@@ -621,6 +778,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             } else { // Guest user
                 await type("Guest session restored. ✅");
+                applyPreferences();
                 await new Promise(r => setTimeout(r, 1000));
                 await showMainMenu();
             }

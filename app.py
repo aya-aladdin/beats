@@ -63,6 +63,9 @@ class User(db.Model):
     beats = db.Column(db.Integer, default=0)
     roleplay_unlocked = db.Column(db.Boolean, default=False)
     ai_name = db.Column(db.String(20), nullable=False, default='AI')
+    font_size = db.Column(db.String(20), default='normal')
+    theme = db.Column(db.String(20), default='default')
+    response_length = db.Column(db.String(20), default='balanced')
 
     def to_dict(self):
         return {
@@ -72,7 +75,10 @@ class User(db.Model):
             "roleplay_unlocked": self.roleplay_unlocked,
             "persona": session.get('persona', DEFAULT_PERSONA), # Include current persona
             "ai_name": self.ai_name,
-            "roleplay_chats_required": ROLEPLAY_CHATS_REQUIRED # Add requirement to user data
+            "roleplay_chats_required": ROLEPLAY_CHATS_REQUIRED,
+            "font_size": self.font_size,
+            "theme": self.theme,
+            "response_length": self.response_length
         }
 
 @app.route('/')
@@ -165,6 +171,21 @@ def set_persona():
     else:
         return jsonify({"error": "Invalid persona."}), 400
 
+@app.route('/api/update_preferences', methods=['POST'])
+def update_preferences():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    user = User.query.get(session['user_id'])
+    data = request.get_json()
+    
+    if 'font_size' in data: user.font_size = data['font_size']
+    if 'theme' in data: user.theme = data['theme']
+    if 'response_length' in data: user.response_length = data['response_length']
+    
+    db.session.commit()
+    return jsonify({"message": "Preferences updated.", "user": user.to_dict()})
+
 @app.route('/api/set_ai_name', methods=['POST'])
 def set_ai_name():
     if 'user_id' not in session:
@@ -184,6 +205,7 @@ def set_ai_name():
 
 @app.route('/api/chat', methods=['POST'])
 def chat_proxy():
+    user = None
     if 'user_id' in session:
         user = User.query.get(session['user_id'])
         if not user: # Add validation check
@@ -214,6 +236,12 @@ def chat_proxy():
     # Prepare messages for the API call
     messages = history + [{"role": "user", "content": user_prompt}]
 
+    # Determine max_tokens based on user preference
+    # Default to 500 (balanced) if user is guest or preference not set
+    length_map = {'concise': 150, 'balanced': 500, 'verbose': 2000}
+    user_pref = user.response_length if user else 'balanced'
+    max_tokens = length_map.get(user_pref, 500)
+
     def generate():
         full_response_text = ""
         try:
@@ -225,7 +253,8 @@ def chat_proxy():
             payload = {
                 "model": "qwen/qwen3-32b",
                 "messages": messages,
-                "stream": True
+                "stream": True,
+                "max_tokens": max_tokens
             }
             
             with requests.post(url, headers=headers, json=payload, stream=True) as response:
