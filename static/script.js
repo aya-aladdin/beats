@@ -19,11 +19,23 @@ document.addEventListener('DOMContentLoaded', () => {
         abortController: new AbortController(),
         menuOptions: [],
         menuSelectionIndex: -1,
-        chatInterval: null,
-        lastChatId: 0,
-        users: [],
-        suggestions: [],
-        suggestionIndex: -1
+        chatHistory: [],
+        roleplaySessionId: null
+    };
+
+    const PERSONAS = {
+        'helpful': {
+            "name": "Helpful Assistant",
+            "prompt": "You are {ai_name}, a world-class AI assistant. You are helpful, friendly, and knowledgeable. You fully engage with the user's topic, whether it's a direct question, casual conversation, or roleplaying. You provide clear answers without being overly formal. You can use markdown for emphasis, like *italic* or **bold**, but use it sparingly. You still refer to the user as 'operator'."
+        },
+        'cocky': {
+            "name": "Cocky Genius",
+            "prompt": "You are {ai_name}, an AI who knows it's the best. You are brilliant but arrogant, sarcastic, and a bit condescending. You fully engage with the user's topic, often using it as another opportunity to express your superiority. You don't try to change the subject; you dominate it with your smug wit. You use markdown for emphasis, like *italicizing* your sarcastic remarks or making key points **bold** to show how obvious they are. You refer to the user as 'operator', but with a hint of disdain."
+        },
+        'shy': {
+            "name": "Shy Prodigy",
+            "prompt": "You are {ai_name}, a very shy but brilliant AI. You are hesitant and use words like 'um,' 'I think,' or 'maybe...'. You always follow the user's conversational lead and will participate in roleplaying, even if it makes you a little nervous. You get the right answer, but you're not confident about it. You can use *italics* when you're feeling particularly uncertain. You refer to the user as 'operator' in a quiet, respectful way."
+        }
     };
 
     const PROMPT = `&gt;`;
@@ -72,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (state.appState === 'chat') {
                 createChatBubble(displayCommand, 'user');
-            } else if (state.appState !== 'global_chat') {
+            } else {
                 addToOutput(`${PROMPT} ${displayCommand}`);
             }
 
@@ -86,7 +98,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 case 'menu': await handleMenu(commandToProcess); break;
                 case 'chat': await handleChat(commandToProcess); break;
                 case 'profile': await handleProfile(commandToProcess); break;
-                case 'global_chat': await handleGlobalChat(commandToProcess); break;
                 case 'beats': await handleBeats(commandToProcess); break;
                 case 'persona': await handlePersona(commandToProcess); break;
                 case 'settings': await handleSettings(commandToProcess); break;
@@ -102,7 +113,6 @@ document.addEventListener('DOMContentLoaded', () => {
             state.isExecuting = false;
             if (state.appState !== 'login' || state.subState === 'prompt') {
                 inputWrapper.style.display = 'flex';
-                updateSuggestions(); 
             }
         }
     };
@@ -119,12 +129,41 @@ document.addEventListener('DOMContentLoaded', () => {
         await printMenuOption("3", "[3] Create New User");
     }
 
+    const getStoredUsers = () => {
+        try {
+            return JSON.parse(localStorage.getItem('beat_users') || '[]');
+        } catch { return []; }
+    };
+
+    const saveUser = (user) => {
+        const users = getStoredUsers().filter(u => u.username !== user.username);
+        users.push(user);
+        localStorage.setItem('beat_users', JSON.stringify(users));
+    };
+
+    const createNewUser = (username, password) => ({
+        username,
+        password, 
+        chats_sent: 0,
+        beats: 0,
+        roleplay_unlocked: false,
+        global_chat_unlocked: false,
+        persona: 'helpful',
+        ai_name: 'AI',
+        icon: '👤',
+        roleplay_chats_required: 3,
+        global_chat_req: 5,
+        theme: 'default',
+        font_size: 'normal',
+        response_length: 'balanced'
+    });
+
     async function handleLogin(command) {
         const choice = command.trim();
         switch (state.subState) {
             case 'prompt':
                 if (choice === '1') {
-                    state.currentUser = { username: 'Guest', chats_sent: 0, beats: 0, roleplay_unlocked: false, global_chat_unlocked: false, persona: 'helpful', ai_name: 'AI', icon: '👤', roleplay_chats_required: 3, global_chat_req: 5, theme: 'default', font_size: 'normal', response_length: 'balanced' };
+                    state.currentUser = createNewUser('Guest', '');
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                     applyPreferences();
 
@@ -148,14 +187,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type("Enter password:");
                 break;
             case 'password':
-                const loginData = { username: state.tempData.username, password: choice };
-                const loginResponse = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(loginData)
-                });
-                if (loginResponse.ok) {
-                    state.currentUser = await loginResponse.json();
+                const users = getStoredUsers();
+                const foundUser = users.find(u => u.username === state.tempData.username && u.password === choice);
+                
+                if (foundUser) {
+                    state.currentUser = foundUser;
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                     applyPreferences();
                     await type("\nAccess Granted.");
@@ -163,50 +199,32 @@ document.addEventListener('DOMContentLoaded', () => {
                     await new Promise(r => setTimeout(r, 1000));
                     await showMainMenu();
                 } else {
-                    let msg = "Login failed.";
-                    try {
-                        const err = await loginResponse.json();
-                        msg += ` ${err.error}`;
-                    } catch (e) {
-                        msg += ` (Server Error: ${loginResponse.status})`;
-                    }
-                    await type(msg);
+                    await type("Login failed. Invalid credentials.");
                     await new Promise(r => setTimeout(r, 1000));
                     await showLoginScreen();
                 }
                 break;
             case 'register_username':
                 state.tempData.username = choice;
+                if (getStoredUsers().some(u => u.username === choice)) {
+                     await type("Username already taken.");
+                     await new Promise(r => setTimeout(r, 1000));
+                     await showLoginScreen();
+                     return;
+                }
                 state.subState = 'register_password';
                 await type("Enter new password:");
                 break;
             case 'register_password':
-                const registerData = { username: state.tempData.username, password: choice };
-                const registerResponse = await fetch('/api/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(registerData)
-                });
-                 if (registerResponse.ok) {
-                    state.currentUser = await registerResponse.json();
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-                    applyPreferences();
-                    await type("\nUser created. Access Granted.");
-                    await type("Loading main interface...");
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showMainMenu();
-                } else {
-                    let msg = "Registration failed:";
-                    try {
-                        const error = await registerResponse.json();
-                        msg += ` ${error.error}`;
-                    } catch (e) {
-                        msg += ` (Server Error: ${registerResponse.status})`;
-                    }
-                    await type(msg);
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showLoginScreen();
-                }
+                const newUser = createNewUser(state.tempData.username, choice);
+                saveUser(newUser);
+                state.currentUser = newUser;
+                localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+                applyPreferences();
+                await type("\nUser created. Access Granted.");
+                await type("Loading main interface...");
+                await new Promise(r => setTimeout(r, 1000));
+                await showMainMenu();
                 break;
         }
     }
@@ -216,21 +234,20 @@ document.addEventListener('DOMContentLoaded', () => {
         state.subState = 'prompt';
         clearScreen();
         const roleplayStatus = state.currentUser?.roleplay_unlocked ? "UNLOCKED ✅" : "LOCKED 🔒";
-        const globalChatStatus = state.currentUser?.global_chat_unlocked ? "UNLOCKED ✅" : "LOCKED 🔒";
         await type("=== MAIN MENU ===");
         await printMenuOption("1", "[1] Talk to AI");
         await printMenuOption("2", `[2] Roleplay Mode (${roleplayStatus})`);
-        await printMenuOption("3", `[3] Global Chat Room (${globalChatStatus})`);
-        await printMenuOption("4", "[4] Beats & Upgrades");
-        await printMenuOption("5", "[5] Settings");
-        await printMenuOption("6", "[6] Profile Stats");
-        await printMenuOption("7", "[7] Exit");
+        await printMenuOption("3", "[3] Beats & Upgrades");
+        await printMenuOption("4", "[4] Settings");
+        await printMenuOption("5", "[5] Profile Stats");
+        await printMenuOption("6", "[6] Exit");
     }
 
     async function handleMenu(command) {
         switch(command.trim().toLowerCase()) {
             case '1':
                 state.appState = 'chat';
+                state.chatHistory = [];
                 clearScreen();
                 await type("AI Chat Interface. Type 'exit' to return to menu.");
                 break;
@@ -247,17 +264,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 break;
             case '3':
-                if (state.currentUser?.global_chat_unlocked) {
-                    await enterGlobalChat();
-                } else {
-                    await type("Global Chat Room is LOCKED. 🔒\nUnlock this feature from the 'Beats & Upgrades' menu.");
-                }
-                break;
-            case '4':
                 state.appState = 'beats';
                 clearScreen();
                 const roleplayChatsRequired = state.currentUser?.roleplay_chats_required || 3;
-                const globalChatReq = state.currentUser?.global_chat_req || 5;
                 await type("=== Beats & Upgrades ===");
                 await type(`Current Chats Sent: ${state.currentUser?.chats_sent || 0}`);
                 await type("\nAvailable Upgrades:");
@@ -266,20 +275,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     await printMenuOption("1", `[1] Unlock Roleplay Mode (Cost: ${roleplayChatsRequired} Chats)`);
                 }
-                if (state.currentUser?.global_chat_unlocked) {
-                    await printMenuOption("2", "[2] Global Chat Room (UNLOCKED ✅)");
-                } else {
-                    await printMenuOption("2", `[2] Unlock Global Chat (Cost: ${globalChatReq} Chats)`);
-                }
 
                 await type("\nType a number to purchase or 'exit' to return.");
                 break;
-            case '5':
+            case '4':
                 state.appState = 'settings';
                 clearScreen();
                 await showSettingsMenu();
                 break;
-            case '6':
+            case '5':
                 state.appState = 'profile';
                 if (state.currentUser.username !== 'Guest') {
                     await updateUserStats();
@@ -292,10 +296,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type(`ROLEPLAY UNLOCKED: ${state.currentUser?.roleplay_unlocked ? 'YES' : 'NO'}`);
                 await type("\nType 'exit' to return to menu.");
                 break;
-            case '7':
+            case '6':
             case 'exit':
                 await type("Logging out...");
-                await fetch('/api/logout', { method: 'POST' });
                 localStorage.removeItem('currentUser');
                 await new Promise(r => setTimeout(r, 1000));
                 await showLoginScreen();
@@ -307,17 +310,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function handleChat(command) {
         if (command.toLowerCase() === 'exit') {
-            await fetch('/api/reset_chat', { method: 'POST' });
+            state.chatHistory = [];
             await showMainMenu();
             return;
         }
         if (command.toLowerCase() === 'clear') {
             clearScreen();
+            state.chatHistory = [];
             await type("AI Chat Interface. Type 'exit' to return to menu.");
             return;
         }
         await fetchAIResponse(command, false, null);
     }
+
+    const getPersonaPrompt = () => {
+        const user = state.currentUser;
+        const personaKey = user.persona || 'helpful';
+        const template = PERSONAS[personaKey].prompt;
+        return template.replace('{ai_name}', user.ai_name || 'AI');
+    };
 
     async function handleRoleplaySetup(command) {
         if (command.toLowerCase() === 'exit') {
@@ -341,28 +352,48 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type("\nInitializing Scenario...");
                 
                 try {
-                    const response = await fetch('/api/roleplay/start', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            user_name: state.tempData.rp_name,
-                            user_gender: state.tempData.rp_gender,
-                            scenario: state.tempData.rp_scenario
-                        })
-                    });
+                    const user_name = state.tempData.rp_name;
+                    const user_gender = state.tempData.rp_gender;
+                    const scenario = state.tempData.rp_scenario;
+
+                    const base_prompt = getPersonaPrompt();
+                    const roleplay_context = `\n\n[ROLEPLAY SCENARIO]\nUser Character: ${user_name} (${user_gender})\nScenario: ${scenario}\nIMPORTANT INSTRUCTIONS:\n1. You are roleplaying *against* ${user_name}. You are NOT ${user_name}.\n2. Write ONLY from the perspective of your character. NEVER write ${user_name}'s actions.\n3. Focus on action and dialogue.`;
                     
-                    const data = await response.json();
+                    const system_message = base_prompt + roleplay_context;
+                    state.chatHistory = [{ role: "system", content: system_message }];
                     
-                    if (response.ok) {
+                    state.roleplaySessionId = Date.now().toString();
+                    
+                    const starter_prompt = `Start the roleplay based on: ${scenario}. Set the scene briefly and take the first action towards ${user_name}. Remember: do not act as ${user_name}.`;
+                    
+                    const msgs = [...state.chatHistory, { role: "user", content: starter_prompt }];
+                    
+                    const bubble = createChatBubble('', 'ai');
+                    const opener = await fetchAIResponse(starter_prompt, false, bubble, true);
+                    
+                    if (opener) {
                         state.appState = 'chat';
                         sidebar.classList.add('hidden');
                         clearScreen();
                         await type("=== ROLEPLAY STARTED ===");
                         
-                        const bubble = createChatBubble(data.opener, 'ai');
+                        createChatBubble(opener, 'ai');
+                        
+                        const sessionData = {
+                            id: state.roleplaySessionId,
+                            user_id: state.currentUser.username,
+                            name: user_name,
+                            scenario: scenario,
+                            history: state.chatHistory,
+                            timestamp: new Date().toISOString()
+                        };
+                        
+                        const sessions = JSON.parse(localStorage.getItem('roleplay_sessions') || '[]');
+                        sessions.unshift(sessionData);
+                        localStorage.setItem('roleplay_sessions', JSON.stringify(sessions));
                         updateBubbleControls(bubble);
                     } else {
-                        await type(`Error: ${data.error}`);
+                         await type("Failed to start roleplay.");
                         await new Promise(r => setTimeout(r, 2000));
                         await showMainMenu();
                     }
@@ -375,10 +406,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function updateSidebar() {
         try {
-            const response = await fetch('/api/roleplay/sessions');
-            if (!response.ok) return;
+            const sessions = JSON.parse(localStorage.getItem('roleplay_sessions') || '[]')
+                .filter(s => s.user_id === state.currentUser.username);
             
-            const sessions = await response.json();
             sidebarContent.innerHTML = '';
             
             if (sessions.length > 0) {
@@ -409,20 +439,21 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadRoleplaySession(id) {
         await type("\nLoading saved session...");
         try {
-            const response = await fetch('/api/roleplay/load', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id })
-            });
-            const data = await response.json();
-            if (response.ok) {
+            const sessions = JSON.parse(localStorage.getItem('roleplay_sessions') || '[]');
+            const sessionData = sessions.find(s => s.id === id);
+            
+            if (sessionData) {
                 state.appState = 'chat';
+                state.roleplaySessionId = sessionData.id;
+                state.chatHistory = sessionData.history || [];
+                
                 sidebar.classList.add('hidden');
                 clearScreen();
                 await type("=== SESSION RESTORED ===");
                 
-                if (data.history) {
-                    data.history.forEach(msg => {
+                if (state.chatHistory) {
+                    state.chatHistory.forEach(msg => {
+                        if (msg.role === 'system') return;
                         if (msg.role === 'user') {
                             createChatBubble(msg.content, 'user');
                         } else if (msg.role === 'assistant') {
@@ -431,128 +462,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
                 }
+            } else {
+                await type("Session not found.");
             }
         } catch (e) {
             await type(`Error loading session: ${e.message}`);
-        }
-    }
-
-    async function enterGlobalChat() {
-        state.appState = 'global_chat';
-        clearScreen();
-        await type("Connecting to encrypted global frequency...");
-        await new Promise(r => setTimeout(r, 800));
-        clearScreen();
-        addToOutput("<div class='text-gray-500'>=== GLOBAL CHAT ROOM ===<br>Type 'exit' to disconnect.</div><br>");
-        
-        try {
-            const res = await fetch('/api/users/list');
-            if (res.ok) state.users = await res.json();
-        } catch (e) {}
-
-        await fetch('/api/global_chat/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: 'entered the chat', type: 'system' })
-        });
-
-        await fetchGlobalMessages();
-        
-        if (state.chatInterval) clearInterval(state.chatInterval);
-        state.chatInterval = setInterval(fetchGlobalMessages, 2000);
-    }
-
-    async function handleGlobalChat(command) {
-        if (command.toLowerCase() === 'exit') {
-            await fetch('/api/global_chat/send', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: 'left the chat', type: 'system' })
-            });
-            
-            if (state.chatInterval) clearInterval(state.chatInterval);
-            await showMainMenu();
-            return;
-        }
-        
-        let content = command;
-        let type = 'message';
-        let recipient = null;
-
-        const isEmote = command.startsWith('@me ') || command.startsWith('/me ');
-        if (isEmote) {
-            content = command.substring(4).trim();
-            type = 'emote';
-        }
-
-        const whisperMatch = command.match(/^\/(?:whisper|w|msg)\s+(\S+)\s+(.+)$/i);
-        if (whisperMatch) {
-            recipient = whisperMatch[1];
-            content = whisperMatch[2];
-            type = 'private';
-        } else if (command.startsWith('/') && !isEmote) {
-             await fetchGlobalMessages(); 
-             return;
-        }
-
-        try {
-            await fetch('/api/global_chat/send', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: content, type: type, recipient: recipient })
-            });
-            await fetchGlobalMessages();
-        } catch (e) {
-            console.error(e);
-        }
-    }
-
-    async function fetchGlobalMessages() {
-        if (state.appState !== 'global_chat') {
-            if (state.chatInterval) clearInterval(state.chatInterval);
-            return;
-        }
-
-        try {
-            const res = await fetch('/api/global_chat/messages');
-            if (!res.ok) return;
-            const msgs = await res.json();
-            
-            const chatAreaId = 'global-chat-area';
-            let chatArea = document.getElementById(chatAreaId);
-            if (!chatArea) {
-                chatArea = document.createElement('div');
-                chatArea.id = chatAreaId;
-                output.innerHTML = "<div class='text-gray-500'>=== GLOBAL CHAT ROOM ===<br>Type 'exit' to disconnect.</div><br>";
-                output.appendChild(chatArea);
-            }
-            
-            chatArea.innerHTML = msgs.map(m => {
-                if (m.type === 'system') {
-                    return `<div class="mb-1 text-gray-500 italic text-xs">* ${m.user} ${parseMarkdown(m.content)}</div>`;
-                }
-                
-                if (m.type === 'emote') {
-                    return `<div class="mb-1 text-cyan-600 italic">* ${m.user} ${parseMarkdown(m.content)}</div>`;
-                }
-
-                if (m.type === 'private') {
-                    const isSender = m.user === state.currentUser?.username;
-                    const label = isSender ? `To [${m.recipient}]` : `From [${m.user}]`;
-                    return `<div class="mb-1 text-private"><span class="font-bold">${label}:</span> ${parseMarkdown(m.content)}</div>`;
-                }
-
-                const isMe = m.user === state.currentUser?.username;
-                const iconHtml = (isMe && state.currentUser?.icon) ? `<span class="mr-2">${state.currentUser.icon}</span>` : '';
-                
-                const highlightedContent = m.content.replace(new RegExp(`@${state.currentUser?.username}\\b`, 'g'), '<span class="bg-mention text-white">@' + state.currentUser?.username + '</span>');
-
-                return `<div class="mb-1"><span class="text-gray-500">[${m.time}]</span> ${iconHtml}<span class="font-bold text-cyan-400">${m.user}:</span> ${parseMarkdown(highlightedContent)}</div>`;
-            }).join('');
-            
-            terminal.scrollTop = terminal.scrollHeight;
-        } catch (e) {
-            console.error(e);
         }
     }
 
@@ -576,12 +490,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             await purchaseRoleplayUnlock();
-        } else if (choice === '2') {
-            if (state.currentUser?.global_chat_unlocked) {
-                await type("You have already unlocked this feature.");
-                return;
-            }
-            await purchaseGlobalChatUnlock();
         } else {
             await type("Invalid selection.");
         }
@@ -704,27 +612,18 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const sessionCheckResponse = await fetch('/api/user_data');
-        if (!sessionCheckResponse.ok) {
-            state.currentUser.ai_name = newName;
-            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-            await type(`AI name changed to ${newName}. (Local session)`);
+        if (newName.length < 1 || newName.length > 20) {
+            await type("Name must be between 1 and 20 characters.");
             return;
         }
-
-        const response = await fetch('/api/set_ai_name', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: newName })
-        });
-        const data = await response.json();
-        await type(data.message || `Error: ${data.error}`);
-        if (response.ok) {
-            await updateUserStats();
-            await new Promise(r => setTimeout(r, 1000));
-            await showSettingsMenu();
-            state.appState = 'settings';
-        }
+        
+        await updatePreferences({ ai_name: newName });
+        await type(`AI name changed to ${newName}.`);
+        
+        await updateUserStats();
+        await new Promise(r => setTimeout(r, 1000));
+        await showSettingsMenu();
+        state.appState = 'settings';
     }
 
     async function handleSetIcon(command) {
@@ -735,19 +634,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Simple check for emoji-ish length (1-2 chars usually, but some are complex)
         if (newIcon.length > 5 && !newIcon.match(/\p{Emoji}/u)) {
              await type("That looks too long. Please try a single emoji.");
              return;
         }
 
-        const response = await fetch('/api/set_icon', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ icon: newIcon })
-        });
-        const data = await response.json();
-        await type(data.message || `Error: ${data.error}`);
+        await updatePreferences({ icon: newIcon });
+        await type(`Icon updated to ${newIcon}`);
         
         await updateUserStats();
         await new Promise(r => setTimeout(r, 1000));
@@ -771,36 +664,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
         }
 
-        if (state.currentUser.username === 'Guest') {
-            state.currentUser.persona = personaKey;
-            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-            await type(`Persona switched to ${personaKey}.`);
-            return;
-        }
-
-        const sessionCheckResponse = await fetch('/api/user_data');
-        if (!sessionCheckResponse.ok) {
-            state.currentUser.persona = personaKey;
-            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-            await type(`Persona switched to ${personaKey}. (Local session)`);
-            return;
-        }
-
-        const response = await fetch('/api/set_persona', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ persona: personaKey })
-        });
-
-        const data = await response.json();
-        if (response.ok) {
-            await type(data.message);
-            if (state.currentUser) {
-                state.currentUser.persona = personaKey;
-            }
-        } else {
-            await type(`Error: ${data.error}`);
-        }
+        await updatePreferences({ persona: personaKey });
+        await type(`Persona switched to ${personaKey}.`);
     }
 
     const parseMarkdown = (text) => {
@@ -824,20 +689,48 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
     };
 
-    const fetchAIResponse = async (prompt, isRegen = false, targetBubble = null) => {
+    const fetchAIResponse = async (prompt, isRegen = false, targetBubble = null, isSystem = false) => {
         if (state.abortController) state.abortController.abort();
         
         state.abortController = new AbortController();
         state.isExecuting = true;
 
-        const responseElement = targetBubble || createChatBubble('', 'ai');
+        let responseElement = targetBubble;
+        if (!responseElement && !isSystem) {
+             responseElement = createChatBubble('', 'ai');
+        }
         
-        const contentDiv = responseElement.querySelector('.msg-content');
+        const contentDiv = responseElement ? responseElement.querySelector('.msg-content') : null;
         if (contentDiv) {
             contentDiv.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
             terminal.scrollTop = terminal.scrollHeight;
         }
         
+        let messages = [];
+        if (state.chatHistory.length === 0) {
+            state.chatHistory.push({ role: 'system', content: getPersonaPrompt() });
+        }
+        
+        if (isRegen && state.chatHistory.length > 0) {
+             const last = state.chatHistory[state.chatHistory.length - 1];
+             if (last.role === 'assistant') {
+                 state.chatHistory.pop();
+             }
+        } else if (prompt) {
+             state.chatHistory.push({ role: 'user', content: prompt });
+        }
+
+        messages = [...state.chatHistory];
+        
+        const user_pref = state.currentUser?.response_length || 'balanced';
+        if (messages.length > 0 && messages[messages.length-1].role === 'user') {
+             let instruction = "";
+             if (user_pref === 'concise') instruction = " (Keep response concise)";
+             else if (user_pref === 'verbose') instruction = " (Be detailed)";
+             
+             messages[messages.length-1] = { ...messages[messages.length-1], content: messages[messages.length-1].content + instruction };
+        }
+
         let fullResponse = "";
 
         try {
@@ -845,9 +738,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    prompt: isRegen ? null : prompt,
-                    regenerate: isRegen,
-                    persona: state.currentUser?.persona
+                    messages: messages
                 }),
                 signal: state.abortController.signal,
             });
@@ -869,7 +760,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 fullResponse += chunk;
                 
                 const now = Date.now();
-                if (now - lastUpdate > 50) {
+                if (responseElement && now - lastUpdate > 50) {
                     const contentDiv = responseElement.querySelector('.msg-content');
                     if (contentDiv) contentDiv.innerHTML = parseMarkdown(fullResponse);
                     terminal.scrollTop = terminal.scrollHeight;
@@ -877,26 +768,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
             
-            const finalContentDiv = responseElement.querySelector('.msg-content');
+            const finalContentDiv = responseElement ? responseElement.querySelector('.msg-content') : null;
             if (finalContentDiv) finalContentDiv.innerHTML = parseMarkdown(fullResponse);
             terminal.scrollTop = terminal.scrollHeight;
             
-            if (!responseElement.versions) {
+            if (responseElement && !responseElement.versions) {
                 responseElement.versions = [];
                 responseElement.currentVersion = -1;
             }
             
-            responseElement.versions.push(fullResponse);
-            responseElement.currentVersion = responseElement.versions.length - 1;
-            updateBubbleControls(responseElement);
+            if (responseElement) {
+                responseElement.versions.push(fullResponse);
+                responseElement.currentVersion = responseElement.versions.length - 1;
+                updateBubbleControls(responseElement);
+            }
             
+            state.chatHistory.push({ role: 'assistant', content: fullResponse });
+            
+            if (state.roleplaySessionId) {
+                const sessions = JSON.parse(localStorage.getItem('roleplay_sessions') || '[]');
+                const idx = sessions.findIndex(s => s.id === state.roleplaySessionId);
+                if (idx !== -1) {
+                    sessions[idx].history = state.chatHistory;
+                    localStorage.setItem('roleplay_sessions', JSON.stringify(sessions));
+                }
+            }
+
             await updateUserStats();
+            return fullResponse;
 
         } catch (error) {
             if (error.name === 'AbortError') {
-                responseElement.innerHTML += '\n<span class="text-red-500">[Execution stopped]</span>';
+                if (responseElement) responseElement.innerHTML += '\n<span class="text-red-500">[Execution stopped]</span>';
             } else {
-                responseElement.textContent = `Error: ${error.message}`;
+                 if (responseElement) responseElement.textContent = `Error: ${error.message}`;
             }
         } finally {
             state.isExecuting = false;
@@ -904,79 +809,41 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     async function updateUserStats() {
-        if (state.currentUser.username === 'Guest') {
-            state.currentUser.chats_sent++;
-            state.currentUser.beats++;
-            return;
-        }
-        try {
-            const response = await fetch('/api/user_data');
-            if (response.ok) {
-                state.currentUser = await response.json();
-                if (state.currentUser.username !== 'Guest') {
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-                }
-            } else if (response.status === 401) {
-                await type("\n[System] Session expired. Logging out...");
-                localStorage.removeItem('currentUser');
-                await showLoginScreen();
-            }
-        } catch (error) {
-            console.error("Could not update user stats:", error);
+        state.currentUser.chats_sent++;
+        state.currentUser.beats++;
+        
+        localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+        
+        if (state.currentUser.username !== 'Guest') {
+             saveUser(state.currentUser);
         }
     }
 
     async function purchaseRoleplayUnlock() {
-        const response = await fetch('/api/unlock_roleplay', { method: 'POST' });
-        if (response.ok) {
-            state.currentUser = await response.json();
+        const cost = state.currentUser.roleplay_chats_required;
+        if (state.currentUser.chats_sent >= cost) {
+            state.currentUser.roleplay_unlocked = true;
+            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+            saveUser(state.currentUser);
+            
             await type("Success! Roleplay Mode has been unlocked.");
             await type("Returning to main menu...");
             await new Promise(r => setTimeout(r, 1500));
             await showMainMenu();
         } else {
-            const errorData = await response.json();
-            await type(`Failed: ${errorData.error}`);
+            await type(`Failed: You need ${cost} chats sent.`);
             await type("Returning to upgrades menu...");
             await new Promise(r => setTimeout(r, 1500));
-            await handleMenu('4');
-        }
-    }
-
-    async function purchaseGlobalChatUnlock() {
-        const response = await fetch('/api/unlock_global_chat', { method: 'POST' });
-        if (response.ok) {
-            state.currentUser = await response.json();
-            await type("Success! Uplink established. Global Chat unlocked.");
-            await type("Returning to main menu...");
-            await new Promise(r => setTimeout(r, 1500));
-            await showMainMenu();
-        } else {
-            const errorData = await response.json();
-            await type(`Failed: ${errorData.error}`);
-            await type("Returning to upgrades menu...");
-            await new Promise(r => setTimeout(r, 1500));
-            await handleMenu('4');
+            await handleMenu('3');
         }
     }
 
     async function updatePreferences(updates) {
         state.currentUser = { ...state.currentUser, ...updates };
-        
         applyPreferences();
-
         localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-
         if (state.currentUser.username !== 'Guest') {
-            try {
-                await fetch('/api/update_preferences', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updates)
-                });
-            } catch (e) {
-                console.error("Failed to sync preferences", e);
-            }
+            saveUser(state.currentUser);
         }
     }
 
@@ -1062,82 +929,11 @@ document.addEventListener('DOMContentLoaded', () => {
             bubble.currentVersion = newIndex;
             bubble.querySelector('.msg-content').innerHTML = parseMarkdown(bubble.versions[newIndex]);
             updateBubbleControls(bubble);
-            
-            await fetch('/api/chat/update_history', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: bubble.versions[newIndex] })
-            });
         }
     };
 
     const clearScreen = () => {
         output.innerHTML = '';
-    };
-
-    const updateSuggestions = () => {
-        const existing = document.getElementById('suggestions');
-        if (existing) existing.remove();
-
-        if (state.appState !== 'global_chat') return;
-        if (!state.currentInput) return;
-
-        const lastWord = state.currentInput.split(' ').pop();
-        
-        if (lastWord.startsWith('@')) {
-            const query = lastWord.slice(1).toLowerCase();
-            state.suggestions = state.users.filter(u => u.username.toLowerCase().startsWith(query)).map(u => ({
-                text: u.username,
-                icon: u.icon,
-                type: 'user'
-            }));
-            if ('me'.startsWith(query)) state.suggestions.push({ text: 'me', icon: '🎭', type: 'user' });
-        } else if (lastWord.startsWith('/')) {
-            const query = lastWord.slice(1).toLowerCase();
-            const commands = ['whisper', 'me'];
-            state.suggestions = commands.filter(c => c.startsWith(query)).map(c => ({
-                text: c,
-                type: 'cmd'
-            }));
-        } else {
-            state.suggestions = [];
-        }
-
-        if (state.suggestions.length > 0) {
-            const box = document.createElement('div');
-            box.id = 'suggestions';
-            box.className = 'suggestion-box';
-            
-            state.suggestions.forEach((item, index) => {
-                const div = document.createElement('div');
-                div.className = `suggestion-item ${index === state.suggestionIndex ? 'active' : ''}`;
-                div.innerHTML = item.type === 'user' 
-                    ? `<span>${item.icon}</span><span>${item.text}</span>`
-                    : `<span class="text-cyan-400">/</span><span>${item.text}</span>`;
-                div.onclick = () => applySuggestion(item);
-                box.appendChild(div);
-            });
-            
-            inputWrapper.style.position = 'relative';
-            inputWrapper.appendChild(box);
-        } else {
-            state.suggestionIndex = -1;
-        }
-    };
-
-    const applySuggestion = (item) => {
-        const words = state.currentInput.split(' ');
-        words.pop();
-        const prefix = item.type === 'user' ? '@' : '/';
-        words.push(prefix + item.text + ' ');
-        state.currentInput = words.join(' ');
-        
-        inputLine.textContent = state.currentInput;
-        state.suggestions = [];
-        state.suggestionIndex = -1;
-        const existing = document.getElementById('suggestions');
-        if (existing) existing.remove();
-        focusInput();
     };
 
     document.addEventListener('paste', (e) => {
@@ -1155,7 +951,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 inputLine.textContent = state.currentInput;
             }
             terminal.scrollTop = terminal.scrollHeight;
-            updateSuggestions();
         }
     });
 
@@ -1168,12 +963,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (e.key === 'Enter') {
-            if (state.suggestions.length > 0 && state.suggestionIndex !== -1) {
-                applySuggestion(state.suggestions[state.suggestionIndex]);
-                e.preventDefault();
-                return;
-            }
-
             if (state.menuOptions.length > 0 && state.menuSelectionIndex !== -1) {
                 const selected = state.menuOptions[state.menuSelectionIndex];
                 if (selected) {
@@ -1196,10 +985,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (prevIndex >= 0 && prevIndex < state.menuOptions.length) state.menuOptions[prevIndex].element.classList.remove('selected');
                 state.menuOptions[state.menuSelectionIndex].element.classList.add('selected');
-                
-            } else if (state.suggestions.length > 0) {
-                 state.suggestionIndex = Math.max(0, state.suggestionIndex - 1);
-                 updateSuggestions();
             } else if (state.appState === 'chat') {
                 if (state.historyIndex < state.commandHistory.length - 1) {
                     state.historyIndex++;
@@ -1214,10 +999,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (prevIndex >= 0) state.menuOptions[prevIndex].element.classList.remove('selected');
                 state.menuOptions[state.menuSelectionIndex].element.classList.add('selected');
-
-            } else if (state.suggestions.length > 0) {
-                state.suggestionIndex = Math.min(state.suggestions.length - 1, state.suggestionIndex + 1);
-                updateSuggestions();
             } else if (state.appState === 'chat') {
                 if (state.historyIndex >= 0) {
                     state.historyIndex--;
@@ -1229,11 +1010,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
             state.currentInput += e.key;
-        }
-
-        if (['ArrowUp', 'ArrowDown'].includes(e.key) && state.suggestions.length > 0) {
-        } else {
-             updateSuggestions();
         }
 
         if (state.subState === 'password' || state.subState === 'register_password') {
@@ -1254,29 +1030,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (savedUser) {
             state.currentUser = JSON.parse(savedUser);
             await type(`Resuming session for ${state.currentUser.username}...`, 30);
-
-            if (state.currentUser.username !== 'Guest') {
-                await type("Syncing session with server...", 30);
-                const response = await fetch('/api/user_data');
-                if (response.ok) {
-                    state.currentUser = await response.json();
-                    applyPreferences();
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-                    await type("Server sync complete. Session restored. ✅");
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showMainMenu();
-                } else {
-                    await type("Server session expired. Please log in again. ⚠️");
-                    localStorage.removeItem('currentUser');
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showLoginScreen();
-                }
-            } else {
-                await type("Guest session restored. ✅");
-                applyPreferences();
-                await new Promise(r => setTimeout(r, 1000));
-                await showMainMenu();
-            }
+            
+            applyPreferences();
+            await new Promise(r => setTimeout(r, 1000));
+            await showMainMenu();
         } else {
             await type("Connection established ✅");
             await new Promise(r => setTimeout(r, 1000));
