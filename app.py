@@ -13,7 +13,11 @@ app = Flask(__name__)
 load_dotenv()
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev_key_fixed_for_restart')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
+
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///site.db')
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
@@ -549,63 +553,62 @@ def start_roleplay():
         return jsonify({"message": "Roleplay initialized.", "opener": fallback})
 
 def check_and_migrate_db():
-    """Adds new columns to the database if they are missing (Simple Migration)."""
     try:
-        with app.app_context():
-            with db.engine.connect() as conn:
-                try:
-                    conn.execute(text("SELECT font_size FROM user LIMIT 1"))
-                except Exception:
-                    print("Migrating DB: Adding font_size column...")
-                    conn.execute(text("ALTER TABLE user ADD COLUMN font_size VARCHAR(20) DEFAULT 'normal'"))
-                    conn.commit()
+        with db.engine.connect() as conn:
+            try:
+                conn.execute(text("SELECT font_size FROM user LIMIT 1"))
+            except Exception:
+                print("Migrating DB: Adding font_size column...")
+                conn.execute(text("ALTER TABLE user ADD COLUMN font_size VARCHAR(20) DEFAULT 'normal'"))
+                conn.commit()
 
-                try:
-                    conn.execute(text("SELECT theme FROM user LIMIT 1"))
-                except Exception:
-                    print("Migrating DB: Adding theme column...")
-                    conn.execute(text("ALTER TABLE user ADD COLUMN theme VARCHAR(20) DEFAULT 'default'"))
-                    conn.commit()
+            try:
+                conn.execute(text("SELECT theme FROM user LIMIT 1"))
+            except Exception:
+                print("Migrating DB: Adding theme column...")
+                conn.execute(text("ALTER TABLE user ADD COLUMN theme VARCHAR(20) DEFAULT 'default'"))
+                conn.commit()
 
-                try:
-                    conn.execute(text("SELECT response_length FROM user LIMIT 1"))
-                except Exception:
-                    print("Migrating DB: Adding response_length column...")
-                    conn.execute(text("ALTER TABLE user ADD COLUMN response_length VARCHAR(20) DEFAULT 'balanced'"))
-                    conn.commit()
+            try:
+                conn.execute(text("SELECT response_length FROM user LIMIT 1"))
+            except Exception:
+                print("Migrating DB: Adding response_length column...")
+                conn.execute(text("ALTER TABLE user ADD COLUMN response_length VARCHAR(20) DEFAULT 'balanced'"))
+                conn.commit()
 
-                try:
-                    conn.execute(text("SELECT global_chat_unlocked FROM user LIMIT 1"))
-                except Exception:
-                    print("Migrating DB: Adding global_chat_unlocked column...")
-                    conn.execute(text("ALTER TABLE user ADD COLUMN global_chat_unlocked BOOLEAN DEFAULT 0"))
-                    conn.commit()
+            try:
+                conn.execute(text("SELECT global_chat_unlocked FROM user LIMIT 1"))
+            except Exception:
+                print("Migrating DB: Adding global_chat_unlocked column...")
+                conn.execute(text("ALTER TABLE user ADD COLUMN global_chat_unlocked BOOLEAN DEFAULT 0"))
+                conn.commit()
 
-                try:
-                    conn.execute(text("SELECT icon FROM user LIMIT 1"))
-                except Exception:
-                    print("Migrating DB: Adding icon column...")
-                    conn.execute(text("ALTER TABLE user ADD COLUMN icon VARCHAR(10) DEFAULT '👤'"))
-                    conn.commit()
+            try:
+                conn.execute(text("SELECT icon FROM user LIMIT 1"))
+            except Exception:
+                print("Migrating DB: Adding icon column...")
+                conn.execute(text("ALTER TABLE user ADD COLUMN icon VARCHAR(10) DEFAULT '👤'"))
+                conn.commit()
 
-                try:
-                    conn.execute(text("SELECT msg_type FROM global_message LIMIT 1"))
-                except Exception:
-                    print("Migrating DB: Adding msg_type column to global_message...")
-                    conn.execute(text("ALTER TABLE global_message ADD COLUMN msg_type VARCHAR(10) DEFAULT 'message'"))
-                    conn.commit()
+            try:
+                conn.execute(text("SELECT msg_type FROM global_message LIMIT 1"))
+            except Exception:
+                print("Migrating DB: Adding msg_type column to global_message...")
+                conn.execute(text("ALTER TABLE global_message ADD COLUMN msg_type VARCHAR(10) DEFAULT 'message'"))
+                conn.commit()
 
-                try:
-                    conn.execute(text("SELECT recipient FROM global_message LIMIT 1"))
-                except Exception:
-                    print("Migrating DB: Adding recipient column to global_message...")
-                    conn.execute(text("ALTER TABLE global_message ADD COLUMN recipient VARCHAR(20) DEFAULT NULL"))
-                    conn.commit()
+            try:
+                conn.execute(text("SELECT recipient FROM global_message LIMIT 1"))
+            except Exception:
+                print("Migrating DB: Adding recipient column to global_message...")
+                conn.execute(text("ALTER TABLE global_message ADD COLUMN recipient VARCHAR(20) DEFAULT NULL"))
+                conn.commit()
     except Exception as e:
         print(f"Migration Warning: {e}")
 
+with app.app_context():
+    db.create_all()
+    check_and_migrate_db()
+
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        check_and_migrate_db()
     app.run(debug=True)
