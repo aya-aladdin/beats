@@ -20,7 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
         menuOptions: [],
         menuSelectionIndex: -1,
         chatInterval: null,
-        lastChatId: 0
+        lastChatId: 0,
+        users: [],
+        suggestions: [],
+        suggestionIndex: -1
     };
 
     const PROMPT = `&gt;`;
@@ -99,6 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
             state.isExecuting = false;
             if (state.appState !== 'login' || state.subState === 'prompt') {
                 inputWrapper.style.display = 'flex';
+                updateSuggestions(); 
             }
         }
     };
@@ -441,6 +445,11 @@ document.addEventListener('DOMContentLoaded', () => {
         clearScreen();
         addToOutput("<div class='text-gray-500'>=== GLOBAL CHAT ROOM ===<br>Type 'exit' to disconnect.</div><br>");
         
+        try {
+            const res = await fetch('/api/users/list');
+            if (res.ok) state.users = await res.json();
+        } catch (e) {}
+
         await fetch('/api/global_chat/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -466,15 +475,31 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        const isEmote = command.startsWith('@me ');
-        const content = isEmote ? command.substring(4).trim() : command;
-        const type = isEmote ? 'emote' : 'message';
+        let content = command;
+        let type = 'message';
+        let recipient = null;
+
+        const isEmote = command.startsWith('@me ') || command.startsWith('/me ');
+        if (isEmote) {
+            content = command.substring(4).trim();
+            type = 'emote';
+        }
+
+        const whisperMatch = command.match(/^\/(?:whisper|w|msg)\s+(\S+)\s+(.+)$/i);
+        if (whisperMatch) {
+            recipient = whisperMatch[1];
+            content = whisperMatch[2];
+            type = 'private';
+        } else if (command.startsWith('/') && !isEmote) {
+             await fetchGlobalMessages(); 
+             return;
+        }
 
         try {
             await fetch('/api/global_chat/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: content, type: type })
+                body: JSON.stringify({ content: content, type: type, recipient: recipient })
             });
             await fetchGlobalMessages();
         } catch (e) {
@@ -511,10 +536,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     return `<div class="mb-1 text-cyan-600 italic">* ${m.user} ${parseMarkdown(m.content)}</div>`;
                 }
 
+                if (m.type === 'private') {
+                    const isSender = m.user === state.currentUser?.username;
+                    const label = isSender ? `To [${m.recipient}]` : `From [${m.user}]`;
+                    return `<div class="mb-1 text-private"><span class="font-bold">${label}:</span> ${parseMarkdown(m.content)}</div>`;
+                }
+
                 const isMe = m.user === state.currentUser?.username;
                 const iconHtml = (isMe && state.currentUser?.icon) ? `<span class="mr-2">${state.currentUser.icon}</span>` : '';
                 
-                return `<div class="mb-1"><span class="text-gray-500">[${m.time}]</span> ${iconHtml}<span class="font-bold text-cyan-400">${m.user}:</span> ${parseMarkdown(m.content)}</div>`;
+                const highlightedContent = m.content.replace(new RegExp(`@${state.currentUser?.username}\\b`, 'g'), '<span class="bg-mention text-white">@' + state.currentUser?.username + '</span>');
+
+                return `<div class="mb-1"><span class="text-gray-500">[${m.time}]</span> ${iconHtml}<span class="font-bold text-cyan-400">${m.user}:</span> ${parseMarkdown(highlightedContent)}</div>`;
             }).join('');
             
             terminal.scrollTop = terminal.scrollHeight;
@@ -1042,6 +1075,71 @@ document.addEventListener('DOMContentLoaded', () => {
         output.innerHTML = '';
     };
 
+    const updateSuggestions = () => {
+        const existing = document.getElementById('suggestions');
+        if (existing) existing.remove();
+
+        if (state.appState !== 'global_chat') return;
+        if (!state.currentInput) return;
+
+        const lastWord = state.currentInput.split(' ').pop();
+        
+        if (lastWord.startsWith('@')) {
+            const query = lastWord.slice(1).toLowerCase();
+            state.suggestions = state.users.filter(u => u.username.toLowerCase().startsWith(query)).map(u => ({
+                text: u.username,
+                icon: u.icon,
+                type: 'user'
+            }));
+            if ('me'.startsWith(query)) state.suggestions.push({ text: 'me', icon: '🎭', type: 'user' });
+        } else if (lastWord.startsWith('/')) {
+            const query = lastWord.slice(1).toLowerCase();
+            const commands = ['whisper', 'me'];
+            state.suggestions = commands.filter(c => c.startsWith(query)).map(c => ({
+                text: c,
+                type: 'cmd'
+            }));
+        } else {
+            state.suggestions = [];
+        }
+
+        if (state.suggestions.length > 0) {
+            const box = document.createElement('div');
+            box.id = 'suggestions';
+            box.className = 'suggestion-box';
+            
+            state.suggestions.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = `suggestion-item ${index === state.suggestionIndex ? 'active' : ''}`;
+                div.innerHTML = item.type === 'user' 
+                    ? `<span>${item.icon}</span><span>${item.text}</span>`
+                    : `<span class="text-cyan-400">/</span><span>${item.text}</span>`;
+                div.onclick = () => applySuggestion(item);
+                box.appendChild(div);
+            });
+            
+            inputWrapper.style.position = 'relative';
+            inputWrapper.appendChild(box);
+        } else {
+            state.suggestionIndex = -1;
+        }
+    };
+
+    const applySuggestion = (item) => {
+        const words = state.currentInput.split(' ');
+        words.pop();
+        const prefix = item.type === 'user' ? '@' : '/';
+        words.push(prefix + item.text + ' ');
+        state.currentInput = words.join(' ');
+        
+        inputLine.textContent = state.currentInput;
+        state.suggestions = [];
+        state.suggestionIndex = -1;
+        const existing = document.getElementById('suggestions');
+        if (existing) existing.remove();
+        focusInput();
+    };
+
     document.addEventListener('paste', (e) => {
         if (state.isExecuting) return;
         e.preventDefault();
@@ -1057,6 +1155,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 inputLine.textContent = state.currentInput;
             }
             terminal.scrollTop = terminal.scrollHeight;
+            updateSuggestions();
         }
     });
 
@@ -1069,6 +1168,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (e.key === 'Enter') {
+            if (state.suggestions.length > 0 && state.suggestionIndex !== -1) {
+                applySuggestion(state.suggestions[state.suggestionIndex]);
+                e.preventDefault();
+                return;
+            }
+
             if (state.menuOptions.length > 0 && state.menuSelectionIndex !== -1) {
                 const selected = state.menuOptions[state.menuSelectionIndex];
                 if (selected) {
@@ -1092,6 +1197,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (prevIndex >= 0 && prevIndex < state.menuOptions.length) state.menuOptions[prevIndex].element.classList.remove('selected');
                 state.menuOptions[state.menuSelectionIndex].element.classList.add('selected');
                 
+            } else if (state.suggestions.length > 0) {
+                 state.suggestionIndex = Math.max(0, state.suggestionIndex - 1);
+                 updateSuggestions();
             } else if (state.appState === 'chat') {
                 if (state.historyIndex < state.commandHistory.length - 1) {
                     state.historyIndex++;
@@ -1107,6 +1215,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (prevIndex >= 0) state.menuOptions[prevIndex].element.classList.remove('selected');
                 state.menuOptions[state.menuSelectionIndex].element.classList.add('selected');
 
+            } else if (state.suggestions.length > 0) {
+                state.suggestionIndex = Math.min(state.suggestions.length - 1, state.suggestionIndex + 1);
+                updateSuggestions();
             } else if (state.appState === 'chat') {
                 if (state.historyIndex >= 0) {
                     state.historyIndex--;
@@ -1118,6 +1229,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
             state.currentInput += e.key;
+        }
+
+        if (['ArrowUp', 'ArrowDown'].includes(e.key) && state.suggestions.length > 0) {
+        } else {
+             updateSuggestions();
         }
 
         if (state.subState === 'password' || state.subState === 'register_password') {

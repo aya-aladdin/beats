@@ -3,7 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 import requests
 import json
-from sqlalchemy import text
+from sqlalchemy import text, or_, and_
 import os
 from dotenv import load_dotenv
 from datetime import datetime
@@ -99,6 +99,7 @@ class GlobalMessage(db.Model):
     content = db.Column(db.String(200), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     msg_type = db.Column(db.String(10), default='message')
+    recipient = db.Column(db.String(20), nullable=True)
 
 @app.route('/')
 def index():
@@ -384,10 +385,37 @@ def unlock_global_chat():
     else:
         return jsonify({"error": f"Requires {GLOBAL_CHAT_REQ} chats sent."}), 400
 
+@app.route('/api/users/list', methods=['GET'])
+def get_users_list():
+    if 'user_id' not in session:
+        return jsonify([])
+    users = User.query.with_entities(User.username, User.icon).all()
+    return jsonify([{"username": u.username, "icon": u.icon} for u in users])
+
 @app.route('/api/global_chat/messages', methods=['GET'])
 def get_global_messages():
-    msgs = GlobalMessage.query.order_by(GlobalMessage.timestamp.desc()).limit(50).all()
-    data = [{"user": m.username, "content": m.content, "type": m.msg_type, "time": m.timestamp.strftime("%H:%M")} for m in msgs[::-1]]
+    if 'user_id' not in session:
+        return jsonify([])
+    
+    current_user = User.query.get(session['user_id'])
+    username = current_user.username
+
+    msgs = GlobalMessage.query.filter(
+        or_(
+            GlobalMessage.recipient == None,
+            GlobalMessage.recipient == '',
+            GlobalMessage.recipient == username,
+            and_(GlobalMessage.username == username, GlobalMessage.recipient != None)
+        )
+    ).order_by(GlobalMessage.timestamp.desc()).limit(50).all()
+    
+    data = [{
+        "user": m.username, 
+        "content": m.content, 
+        "type": m.msg_type, 
+        "time": m.timestamp.strftime("%H:%M"),
+        "recipient": m.recipient
+    } for m in msgs[::-1]]
     return jsonify(data)
 
 @app.route('/api/global_chat/send', methods=['POST'])
@@ -399,9 +427,10 @@ def send_global_message():
     data = request.get_json()
     content = data.get('content', '').strip()
     msg_type = data.get('type', 'message')
+    recipient = data.get('recipient', None)
     
     if content:
-        msg = GlobalMessage(username=user.username, content=content[:200], msg_type=msg_type)
+        msg = GlobalMessage(username=user.username, content=content[:200], msg_type=msg_type, recipient=recipient)
         db.session.add(msg)
         db.session.commit()
     return jsonify({"status": "sent"})
@@ -564,6 +593,13 @@ def check_and_migrate_db():
                 except Exception:
                     print("Migrating DB: Adding msg_type column to global_message...")
                     conn.execute(text("ALTER TABLE global_message ADD COLUMN msg_type VARCHAR(10) DEFAULT 'message'"))
+                    conn.commit()
+
+                try:
+                    conn.execute(text("SELECT recipient FROM global_message LIMIT 1"))
+                except Exception:
+                    print("Migrating DB: Adding recipient column to global_message...")
+                    conn.execute(text("ALTER TABLE global_message ADD COLUMN recipient VARCHAR(20) DEFAULT NULL"))
                     conn.commit()
     except Exception as e:
         print(f"Migration Warning: {e}")

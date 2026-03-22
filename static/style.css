@@ -253,3 +253,46 @@ body.bg-black {
     font-weight: bold;
     color: var(--prompt-color);
 }
+
+.suggestion-box {
+    position: absolute;
+    bottom: 100%;
+    left: 2rem;
+    background-color: rgba(17, 24, 39, 0.95);
+    border: 1px solid #374151;
+    border-radius: 0.375rem;
+    width: 200px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 50;
+    margin-bottom: 0.5rem;
+    box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
+    backdrop-filter: blur(4px);
+}
+
+.suggestion-item {
+    padding: 0.5rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.suggestion-item:last-child {
+    border-bottom: none;
+}
+
+.suggestion-item.active, .suggestion-item:hover {
+    background-color: var(--prompt-color);
+    color: var(--bg-color);
+    font-weight: bold;
+}
+
+.text-private { color: #d946ef; } 
+.bg-mention { 
+    background-color: rgba(255, 255, 0, 0.2);
+    border-radius: 2px;
+    padding: 0 2px;
+}
