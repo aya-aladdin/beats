@@ -1,14 +1,8 @@
 from flask import Flask, render_template, request, Response, stream_with_context
 import requests
 import json
-import os
-from dotenv import load_dotenv
 
 app = Flask(__name__)
-
-load_dotenv()
-
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev_key_fixed')
 
 @app.route('/')
 def index():
