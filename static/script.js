@@ -148,29 +148,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type("Enter password:");
                 break;
             case 'password':
-                const loginData = { username: state.tempData.username, password: choice };
-                const loginResponse = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(loginData)
-                });
-                if (loginResponse.ok) {
-                    state.currentUser = await loginResponse.json();
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-                    applyPreferences();
-                    await type("\nAccess Granted.");
-                    await type("Loading main interface...");
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showMainMenu();
+                const localUsers = JSON.parse(localStorage.getItem('beats_users') || '{}');
+                const user = localUsers[state.tempData.username];
+                
+                if (user && user.password === choice) {
+                     state.currentUser = user.data;
+                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+                     applyPreferences();
+                     await type("\nAccess Granted.");
+                     await type("Loading main interface...");
+                     await new Promise(r => setTimeout(r, 1000));
+                     await showMainMenu();
                 } else {
-                    let msg = "Login failed.";
-                    try {
-                        const err = await loginResponse.json();
-                        msg += ` ${err.error}`;
-                    } catch (e) {
-                        msg += ` (Server Error: ${loginResponse.status})`;
-                    }
-                    await type(msg);
+                    await type("Login failed. Invalid username or password.");
                     await new Promise(r => setTimeout(r, 1000));
                     await showLoginScreen();
                 }
@@ -181,31 +171,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 await type("Enter new password:");
                 break;
             case 'register_password':
-                const registerData = { username: state.tempData.username, password: choice };
-                const registerResponse = await fetch('/api/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(registerData)
-                });
-                 if (registerResponse.ok) {
-                    state.currentUser = await registerResponse.json();
+                const usersDb = JSON.parse(localStorage.getItem('beats_users') || '{}');
+                if (usersDb[state.tempData.username]) {
+                    await type("Username already exists.");
+                    await new Promise(r => setTimeout(r, 1000));
+                    await showLoginScreen();
+                } else {
+                    const newUser = { 
+                        username: state.tempData.username, 
+                        chats_sent: 0, beats: 0, 
+                        roleplay_unlocked: false, global_chat_unlocked: false, 
+                        persona: 'helpful', ai_name: 'AI', icon: '👤', 
+                        roleplay_chats_required: 3, global_chat_req: 5, 
+                        theme: 'default', font_size: 'normal', response_length: 'balanced' 
+                    };
+                    
+                    usersDb[state.tempData.username] = {
+                        password: choice,
+                        data: newUser
+                    };
+                    localStorage.setItem('beats_users', JSON.stringify(usersDb));
+                    
+                    state.currentUser = newUser;
                     localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
                     applyPreferences();
                     await type("\nUser created. Access Granted.");
                     await type("Loading main interface...");
                     await new Promise(r => setTimeout(r, 1000));
                     await showMainMenu();
-                } else {
-                    let msg = "Registration failed:";
-                    try {
-                        const error = await registerResponse.json();
-                        msg += ` ${error.error}`;
-                    } catch (e) {
-                        msg += ` (Server Error: ${registerResponse.status})`;
-                    }
-                    await type(msg);
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showLoginScreen();
                 }
                 break;
         }
@@ -295,7 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case '7':
             case 'exit':
                 await type("Logging out...");
-                await fetch('/api/logout', { method: 'POST' });
+                try { await fetch('/api/logout', { method: 'POST' }); } catch(e){}
                 localStorage.removeItem('currentUser');
                 await new Promise(r => setTimeout(r, 1000));
                 await showLoginScreen();
@@ -365,7 +358,21 @@ document.addEventListener('DOMContentLoaded', () => {
                         await type(`Error: ${data.error}`);
                         await new Promise(r => setTimeout(r, 2000));
                         await showMainMenu();
+                        return;
                     }
+                    
+                    const sessions = JSON.parse(localStorage.getItem(`rp_sessions_${state.currentUser.username}`) || '[]');
+                    const newSession = {
+                        id: Date.now(),
+                        name: state.tempData.rp_name,
+                        scenario: state.tempData.rp_scenario,
+                        timestamp: new Date().toISOString(),
+                        history: data.history || []
+                    };
+                    sessions.unshift(newSession);
+                    localStorage.setItem(`rp_sessions_${state.currentUser.username}`, JSON.stringify(sessions));
+                    state.currentRpSessionId = newSession.id;
+
                 } catch (e) {
                     await type(`Connection Error: ${e.message}`);
                 }
@@ -374,11 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function updateSidebar() {
-        try {
-            const response = await fetch('/api/roleplay/sessions');
-            if (!response.ok) return;
-            
-            const sessions = await response.json();
+        const sessions = JSON.parse(localStorage.getItem(`rp_sessions_${state.currentUser.username}`) || '[]');
             sidebarContent.innerHTML = '';
             
             if (sessions.length > 0) {
@@ -431,7 +434,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
                 }
-            }
         } catch (e) {
             await type(`Error loading session: ${e.message}`);
         }
@@ -445,15 +447,10 @@ document.addEventListener('DOMContentLoaded', () => {
         clearScreen();
         addToOutput("<div class='text-gray-500'>=== GLOBAL CHAT ROOM ===<br>Type 'exit' to disconnect.</div><br>");
         
-        try {
-            const res = await fetch('/api/users/list');
-            if (res.ok) state.users = await res.json();
-        } catch (e) {}
-
         await fetch('/api/global_chat/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: 'entered the chat', type: 'system' })
+            body: JSON.stringify({ content: 'entered the chat', type: 'system', username: state.currentUser.username })
         });
 
         await fetchGlobalMessages();
@@ -467,7 +464,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await fetch('/api/global_chat/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: 'left the chat', type: 'system' })
+                body: JSON.stringify({ content: 'left the chat', type: 'system', username: state.currentUser.username })
             });
             
             if (state.chatInterval) clearInterval(state.chatInterval);
@@ -499,7 +496,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await fetch('/api/global_chat/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: content, type: type, recipient: recipient })
+                body: JSON.stringify({ content: content, type: type, recipient: recipient, username: state.currentUser.username })
             });
             await fetchGlobalMessages();
         } catch (e) {
@@ -514,7 +511,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const res = await fetch('/api/global_chat/messages');
+            const res = await fetch(`/api/global_chat/messages?username=${state.currentUser.username}`);
             if (!res.ok) return;
             const msgs = await res.json();
             
@@ -702,24 +699,19 @@ document.addEventListener('DOMContentLoaded', () => {
             await showSettingsMenu();
             state.appState = 'settings';
             return;
-        }
-
-        const sessionCheckResponse = await fetch('/api/user_data');
-        if (!sessionCheckResponse.ok) {
+        } else {
             state.currentUser.ai_name = newName;
             localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-            await type(`AI name changed to ${newName}. (Local session)`);
-            return;
-        }
-
-        const response = await fetch('/api/set_ai_name', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: newName })
-        });
-        const data = await response.json();
-        await type(data.message || `Error: ${data.error}`);
-        if (response.ok) {
+            
+            if (state.currentUser.username !== 'Guest') {
+                 const usersDb = JSON.parse(localStorage.getItem('beats_users') || '{}');
+                 if (usersDb[state.currentUser.username]) {
+                     usersDb[state.currentUser.username].data = state.currentUser;
+                     localStorage.setItem('beats_users', JSON.stringify(usersDb));
+                 }
+            }
+            
+            await type(`AI name changed to ${newName}.`);
             await updateUserStats();
             await new Promise(r => setTimeout(r, 1000));
             await showSettingsMenu();
@@ -735,19 +727,23 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Simple check for emoji-ish length (1-2 chars usually, but some are complex)
         if (newIcon.length > 5 && !newIcon.match(/\p{Emoji}/u)) {
              await type("That looks too long. Please try a single emoji.");
              return;
         }
-
-        const response = await fetch('/api/set_icon', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ icon: newIcon })
-        });
-        const data = await response.json();
-        await type(data.message || `Error: ${data.error}`);
+        
+        state.currentUser.icon = newIcon;
+        localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+        
+        if (state.currentUser.username !== 'Guest') {
+             const usersDb = JSON.parse(localStorage.getItem('beats_users') || '{}');
+             if (usersDb[state.currentUser.username]) {
+                 usersDb[state.currentUser.username].data = state.currentUser;
+                 localStorage.setItem('beats_users', JSON.stringify(usersDb));
+             }
+        }
+        
+        await type("Icon updated.");
         
         await updateUserStats();
         await new Promise(r => setTimeout(r, 1000));
@@ -771,36 +767,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
         }
 
-        if (state.currentUser.username === 'Guest') {
-            state.currentUser.persona = personaKey;
-            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-            await type(`Persona switched to ${personaKey}.`);
-            return;
+        state.currentUser.persona = personaKey;
+        localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+        if (state.currentUser.username !== 'Guest') {
+             const usersDb = JSON.parse(localStorage.getItem('beats_users') || '{}');
+             if (usersDb[state.currentUser.username]) {
+                 usersDb[state.currentUser.username].data = state.currentUser;
+                 localStorage.setItem('beats_users', JSON.stringify(usersDb));
+             }
         }
-
-        const sessionCheckResponse = await fetch('/api/user_data');
-        if (!sessionCheckResponse.ok) {
-            state.currentUser.persona = personaKey;
-            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-            await type(`Persona switched to ${personaKey}. (Local session)`);
-            return;
-        }
-
-        const response = await fetch('/api/set_persona', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ persona: personaKey })
-        });
-
-        const data = await response.json();
-        if (response.ok) {
-            await type(data.message);
-            if (state.currentUser) {
-                state.currentUser.persona = personaKey;
-            }
-        } else {
-            await type(`Error: ${data.error}`);
-        }
+        await type(`Persona switched to ${personaKey}.`);
     }
 
     const parseMarkdown = (text) => {
@@ -847,7 +823,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     prompt: isRegen ? null : prompt,
                     regenerate: isRegen,
-                    persona: state.currentUser?.persona
+                    persona: state.currentUser?.persona,
+                    ai_name: state.currentUser?.ai_name,
+                    response_length: state.currentUser?.response_length
                 }),
                 signal: state.abortController.signal,
             });
@@ -892,6 +870,16 @@ document.addEventListener('DOMContentLoaded', () => {
             
             await updateUserStats();
 
+            if (state.appState === 'chat' && state.currentRpSessionId) {
+                 const sessions = JSON.parse(localStorage.getItem(`rp_sessions_${state.currentUser.username}`) || '[]');
+                 const session = sessions.find(s => s.id === state.currentRpSessionId);
+                 if (session) {
+                     if (!isRegen) session.history.push({ role: 'user', content: prompt });
+                     session.history.push({ role: 'assistant', content: fullResponse });
+                     localStorage.setItem(`rp_sessions_${state.currentUser.username}`, JSON.stringify(sessions));
+                 }
+            }
+
         } catch (error) {
             if (error.name === 'AbortError') {
                 responseElement.innerHTML += '\n<span class="text-red-500">[Execution stopped]</span>';
@@ -904,39 +892,30 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     async function updateUserStats() {
-        if (state.currentUser.username === 'Guest') {
-            state.currentUser.chats_sent++;
-            state.currentUser.beats++;
-            return;
-        }
-        try {
-            const response = await fetch('/api/user_data');
-            if (response.ok) {
-                state.currentUser = await response.json();
-                if (state.currentUser.username !== 'Guest') {
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-                }
-            } else if (response.status === 401) {
-                await type("\n[System] Session expired. Logging out...");
-                localStorage.removeItem('currentUser');
-                await showLoginScreen();
-            }
-        } catch (error) {
-            console.error("Could not update user stats:", error);
+        state.currentUser.chats_sent++;
+        state.currentUser.beats++;
+        localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+        
+        if (state.currentUser.username !== 'Guest') {
+             const usersDb = JSON.parse(localStorage.getItem('beats_users') || '{}');
+             if (usersDb[state.currentUser.username]) {
+                 usersDb[state.currentUser.username].data = state.currentUser;
+                 localStorage.setItem('beats_users', JSON.stringify(usersDb));
+             }
         }
     }
 
     async function purchaseRoleplayUnlock() {
-        const response = await fetch('/api/unlock_roleplay', { method: 'POST' });
-        if (response.ok) {
-            state.currentUser = await response.json();
+        if (state.currentUser.chats_sent >= state.currentUser.roleplay_chats_required) {
+            state.currentUser.roleplay_unlocked = true;
+            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+            await updateUserStats();
             await type("Success! Roleplay Mode has been unlocked.");
             await type("Returning to main menu...");
             await new Promise(r => setTimeout(r, 1500));
             await showMainMenu();
         } else {
-            const errorData = await response.json();
-            await type(`Failed: ${errorData.error}`);
+            await type(`Failed: Requires ${state.currentUser.roleplay_chats_required} chats.`);
             await type("Returning to upgrades menu...");
             await new Promise(r => setTimeout(r, 1500));
             await handleMenu('4');
@@ -944,16 +923,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function purchaseGlobalChatUnlock() {
-        const response = await fetch('/api/unlock_global_chat', { method: 'POST' });
-        if (response.ok) {
-            state.currentUser = await response.json();
+        if (state.currentUser.chats_sent >= state.currentUser.global_chat_req) {
+            state.currentUser.global_chat_unlocked = true;
+            localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
+            await updateUserStats();
             await type("Success! Uplink established. Global Chat unlocked.");
             await type("Returning to main menu...");
             await new Promise(r => setTimeout(r, 1500));
             await showMainMenu();
         } else {
-            const errorData = await response.json();
-            await type(`Failed: ${errorData.error}`);
+            await type(`Failed: Requires ${state.currentUser.global_chat_req} chats.`);
             await type("Returning to upgrades menu...");
             await new Promise(r => setTimeout(r, 1500));
             await handleMenu('4');
@@ -968,15 +947,11 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
 
         if (state.currentUser.username !== 'Guest') {
-            try {
-                await fetch('/api/update_preferences', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updates)
-                });
-            } catch (e) {
-                console.error("Failed to sync preferences", e);
-            }
+             const usersDb = JSON.parse(localStorage.getItem('beats_users') || '{}');
+             if (usersDb[state.currentUser.username]) {
+                 usersDb[state.currentUser.username].data = state.currentUser;
+                 localStorage.setItem('beats_users', JSON.stringify(usersDb));
+             }
         }
     }
 
@@ -1255,28 +1230,9 @@ document.addEventListener('DOMContentLoaded', () => {
             state.currentUser = JSON.parse(savedUser);
             await type(`Resuming session for ${state.currentUser.username}...`, 30);
 
-            if (state.currentUser.username !== 'Guest') {
-                await type("Syncing session with server...", 30);
-                const response = await fetch('/api/user_data');
-                if (response.ok) {
-                    state.currentUser = await response.json();
-                    applyPreferences();
-                    localStorage.setItem('currentUser', JSON.stringify(state.currentUser));
-                    await type("Server sync complete. Session restored. ✅");
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showMainMenu();
-                } else {
-                    await type("Server session expired. Please log in again. ⚠️");
-                    localStorage.removeItem('currentUser');
-                    await new Promise(r => setTimeout(r, 1000));
-                    await showLoginScreen();
-                }
-            } else {
-                await type("Guest session restored. ✅");
-                applyPreferences();
-                await new Promise(r => setTimeout(r, 1000));
-                await showMainMenu();
-            }
+            applyPreferences();
+            await new Promise(r => setTimeout(r, 1000));
+            await showMainMenu();
         } else {
             await type("Connection established ✅");
             await new Promise(r => setTimeout(r, 1000));
