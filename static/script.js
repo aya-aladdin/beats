@@ -52,6 +52,40 @@ document.addEventListener('DOMContentLoaded', () => {
     inputWrapper.style.position = 'relative';
     inputWrapper.appendChild(tagDropdown);
 
+    const backArrow = document.createElement('div');
+    backArrow.id = 'back-arrow';
+    backArrow.innerHTML = '[ &lt; BACK ]';
+    backArrow.style.cssText = 'width: 100%; padding: 10px 0; margin-bottom: 10px; cursor: pointer; color: #666; display: none; font-family: monospace; font-weight: bold; user-select: none;';
+    backArrow.addEventListener('mouseover', () => backArrow.style.color = '#fff');
+    backArrow.addEventListener('mouseout', () => backArrow.style.color = '#666');
+    terminal.insertBefore(backArrow, terminal.firstChild);
+
+    const updateBackArrow = () => {
+        if (state.appState === 'login' && state.subState === 'prompt') {
+            backArrow.style.display = 'none';
+        } else {
+            backArrow.style.display = 'block';
+        }
+    };
+
+    backArrow.onclick = async () => {
+        if (state.isExecuting) return;
+        
+        if (state.appState === 'login') {
+             if (state.subState !== 'prompt') await showLoginScreen();
+        } else if (state.appState === 'menu') {
+             await handleMenu('exit');
+        } else if (['persona', 'set_ai_name', 'set_icon', 'accessibility'].includes(state.appState)) {
+             state.appState = 'settings';
+             clearScreen();
+             await showSettingsMenu();
+        } else if (state.appState === 'global_chat') {
+             await leaveGlobalChat();
+        } else {
+             await showMainMenu();
+        }
+    };
+
     const focusInput = () => hiddenInput.focus();
     terminal.addEventListener('click', () => {
         if (window.getSelection().toString().length === 0) focusInput();
@@ -127,6 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (state.appState !== 'login' || state.subState === 'prompt') {
                 inputWrapper.style.display = 'flex';
             }
+            updateBackArrow();
         }
     };
 
@@ -1084,6 +1119,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const clearScreen = () => {
         output.innerHTML = '';
+        updateBackArrow();
     };
 
     document.addEventListener('paste', (e) => {
