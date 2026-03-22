@@ -14,8 +14,14 @@ load_dotenv()
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev_key_fixed_for_restart')
 
-database_url = os.environ.get('DATABASE_URL', 'sqlite:///site.db')
-if database_url.startswith("postgres://"):
+database_url = os.environ.get('DATABASE_URL')
+if not database_url:
+    if os.environ.get('VERCEL'):
+        database_url = 'sqlite:////tmp/site.db'
+    else:
+        database_url = 'sqlite:///site.db'
+
+if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 db = SQLAlchemy(app)
