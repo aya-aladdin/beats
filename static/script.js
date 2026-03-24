@@ -32,6 +32,12 @@ document.addEventListener('DOMContentLoaded', () => {
     inputLine.style.direction = 'ltr';
     inputLine.style.textTransform = 'none';
 
+
+    inputWrapper.style.padding = '15px 20px';
+    inputWrapper.style.minHeight = '40px';
+    inputWrapper.style.marginBottom = '15px';
+    inputLine.style.fontSize = '0.9rem';
+
     hiddenInput.addEventListener('input', () => {
         state.currentInput = hiddenInput.value;
         if (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) {
