@@ -15,6 +15,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarContent = document.getElementById('sidebar-content');
     const mobileNewChatBtn = document.getElementById('mobile-new-chat-btn');
 
+    const credit = document.createElement('div');
+    credit.style.position = 'fixed';
+    credit.style.top = '10px';
+    credit.style.right = '20px';
+    credit.style.fontSize = '12px';
+    credit.style.color = '#444';
+    credit.style.zIndex = '2000';
+    credit.innerHTML = 'Designed by <a href="https://github.com/aya-aladdin" target="_blank" style="color: #666; text-decoration: none;">Aya Aladdin</a>';
+    document.body.appendChild(credit);
+
     hiddenInput.style.opacity = '0';
     hiddenInput.style.position = 'fixed';
     hiddenInput.style.bottom = '0';
