@@ -415,6 +415,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function enterGlobalChat() {
         if (!state.currentUser) return;
+        if (!state.currentUser.username || state.currentUser.username.trim() === '') {
+            await type("Error: Invalid username. Please log out and register properly.");
+            await showMainMenu();
+            return;
+        }
+
         state.appState = 'global_chat';
         clearScreen();
         await type("Connecting to Global Chat...", 30);
@@ -437,7 +443,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.globalChat.pollingInterval = setInterval(pollGlobalChat, 2000);
                 pollGlobalChat();
             } else {
-                await type("Failed to join global chat.");
+                let errorMsg = "Failed to join global chat.";
+                try {
+                    const errData = await res.json();
+                    if (errData.error) errorMsg += ` Reason: ${errData.error}`;
+                } catch(e) {}
+                await type(errorMsg);
                 await showMainMenu();
             }
         } catch (e) {

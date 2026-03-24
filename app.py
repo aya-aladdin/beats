@@ -58,7 +58,7 @@ def chat_proxy():
 @app.route('/api/global/join', methods=['POST'])
 def join_chat():
     global message_id_counter
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     username = data.get('username')
     icon = data.get('icon', '👤')
     
@@ -75,7 +75,8 @@ def join_chat():
 @app.route('/api/global/leave', methods=['POST'])
 def leave_chat():
     global message_id_counter
-    username = request.get_json().get('username')
+    data = request.get_json(silent=True) or {}
+    username = data.get('username')
     if username in active_users:
         del active_users[username]
         message_id_counter += 1
@@ -88,7 +89,7 @@ def leave_chat():
 @app.route('/api/global/send', methods=['POST'])
 def send_message():
     global message_id_counter
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     username, content = data.get('username'), data.get('content')
     icon = data.get('icon', '👤')
     
