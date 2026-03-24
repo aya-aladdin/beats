@@ -587,7 +587,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (content.includes(`@${state.currentUser.username}`)) {
                 div.style.backgroundColor = 'rgba(255, 255, 0, 0.1)';
             }
-            div.innerHTML = `[${time}] ${msg.icon} <b>${msg.sender}</b>: ${content}`;
+            div.innerHTML = `[${time}] <b style="color: #99bbff;">${msg.icon} ${msg.sender}</b>: ${content}`;
         }
         output.appendChild(div);
         scrollToBottom();
