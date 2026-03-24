@@ -33,9 +33,17 @@ document.addEventListener('DOMContentLoaded', () => {
     inputLine.style.textTransform = 'none';
 
 
-    inputWrapper.style.padding = '15px 20px';
-    inputWrapper.style.minHeight = '40px';
-    inputWrapper.style.marginBottom = '15px';
+    inputWrapper.style.padding = '20px 20px';
+    inputWrapper.style.minHeight = '60px';
+    inputWrapper.style.position = 'fixed';
+    inputWrapper.style.bottom = '0';
+    inputWrapper.style.left = '0';
+    inputWrapper.style.width = '100%';
+    inputWrapper.style.backgroundColor = 'black';
+    inputWrapper.style.borderTop = '1px solid #333';
+    inputWrapper.style.zIndex = '1000';
+    inputWrapper.style.boxSizing = 'border-box';
+    terminal.style.paddingBottom = '100px';
     inputLine.style.fontSize = '0.9rem';
 
     hiddenInput.addEventListener('input', () => {
@@ -101,7 +109,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const tagDropdown = document.createElement('div');
     tagDropdown.id = 'tag-dropdown';
     tagDropdown.style.cssText = 'position: absolute; bottom: 100%; left: 0; background: #111; border: 1px solid #444; display: none; z-index: 1000; min-width: 150px; flex-direction: column;';
-    inputWrapper.style.position = 'relative';
     inputWrapper.appendChild(tagDropdown);
 
     const backArrow = document.createElement('div');
