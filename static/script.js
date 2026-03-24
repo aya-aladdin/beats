@@ -7,6 +7,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebar = document.getElementById('sidebar');
     const sidebarContent = document.getElementById('sidebar-content');
 
+    hiddenInput.style.opacity = '0';
+    hiddenInput.style.position = 'absolute';
+    hiddenInput.style.zIndex = '-1';
+    hiddenInput.addEventListener('input', () => {
+        state.currentInput = hiddenInput.value;
+        if (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) {
+            inputLine.textContent = state.currentInput.replace(/./g, '*');
+        } else {
+            inputLine.textContent = state.currentInput;
+        }
+        if (state.appState === 'global_chat') {
+            const match = state.currentInput.match(/@(\w*)$/);
+            if (match) {
+                state.globalChat.tagging.active = true;
+                state.globalChat.tagging.filter = match[1];
+                updateTagDropdown();
+            } else {
+                state.globalChat.tagging.active = false;
+                tagDropdown.style.display = 'none';
+            }
+        }
+        terminal.scrollTop = terminal.scrollHeight;
+    });
+
     let state = {
         appState: 'login',
         subState: 'prompt',
@@ -503,6 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
         parts.pop();
         state.currentInput = parts.join('@') + '@' + username + ' ';
         inputLine.textContent = state.currentInput;
+        hiddenInput.value = state.currentInput;
+        hiddenInput.dispatchEvent(new Event('input'));
         state.globalChat.tagging.active = false;
         tagDropdown.style.display = 'none';
         focusInput();
@@ -1129,14 +1155,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const text = (e.clipboardData || window.clipboardData).getData('text');
         if (text) {
             const cleanText = text.replace(/[\r\n]+/g, ' ');
-            state.currentInput += cleanText;
-
-            if (state.subState === 'password' || state.subState === 'register_password') {
-                inputLine.textContent = state.currentInput.replace(/./g, '*');
-            } else {
-                inputLine.textContent = state.currentInput;
-            }
-            terminal.scrollTop = terminal.scrollHeight;
+            hiddenInput.value += cleanText;
+            hiddenInput.dispatchEvent(new Event('input'));
         }
     });
 
@@ -1146,6 +1166,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.abortController.abort();
             }
             return;
+        }
+
+        if (document.activeElement !== hiddenInput && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            hiddenInput.focus();
         }
 
         if (state.appState === 'global_chat' && state.globalChat.tagging.active) {
@@ -1183,8 +1207,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (state.currentInput.trim() || state.appState !== 'chat') {
                 processCommand(state.currentInput);
             }
-        } else if (e.key === 'Backspace') {
-            state.currentInput = state.currentInput.slice(0, -1);
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             if (state.menuOptions.length > 0) {
@@ -1198,6 +1220,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (state.historyIndex < state.commandHistory.length - 1) {
                     state.historyIndex++;
                     state.currentInput = state.commandHistory[state.historyIndex];
+                    hiddenInput.value = state.currentInput;
+                    hiddenInput.dispatchEvent(new Event('input'));
                 }
             }
         } else if (e.key === 'ArrowDown') {
@@ -1216,29 +1240,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     state.historyIndex = -1;
                     state.currentInput = "";
                 }
-            }
-        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-            state.currentInput += e.key;
-        }
-
-        if (state.appState === 'global_chat') {
-            const match = state.currentInput.match(/@(\w*)$/);
-            if (match) {
-                state.globalChat.tagging.active = true;
-                state.globalChat.tagging.filter = match[1];
-                updateTagDropdown();
-            } else {
-                state.globalChat.tagging.active = false;
-                tagDropdown.style.display = 'none';
+                hiddenInput.value = state.currentInput;
+                hiddenInput.dispatchEvent(new Event('input'));
             }
         }
-
-        if (state.subState === 'password' || state.subState === 'register_password') {
-            inputLine.textContent = state.currentInput.replace(/./g, '*');
-        } else {
-            inputLine.textContent = state.currentInput;
-        }
-        terminal.scrollTop = terminal.scrollHeight;
     });
 
     const boot = async () => {
