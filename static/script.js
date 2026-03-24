@@ -145,12 +145,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const type = async (text, delay = 20) => {
         const element = createResponseElement();
-        for (let i = 0; i < text.length; i++) {
-            const char = (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) ? '*' : text.charAt(i);
-            element.innerHTML += char;
-            scrollToBottom();
-            await new Promise(resolve => setTimeout(resolve, Math.random() * delay));
+        let count = 0;
+        for (const char of text) {
+            const displayChar = (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) ? '*' : char;
+            element.insertAdjacentText('beforeend', displayChar);
+            if (++count % 3 === 0) scrollToBottom();
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
+        scrollToBottom();
         return element;
     };
 
@@ -456,10 +458,20 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (res.ok) {
                 const data = await res.json();
+                state.globalChat.lastId = data.last_id || -1;
+
+                try {
+                    const pollRes = await fetch(`/api/global/poll?username=${encodeURIComponent(state.currentUser.username)}&last_id=${state.globalChat.lastId}`);
+                    if (pollRes.ok) {
+                        const pollData = await pollRes.json();
+                        state.globalChat.users = pollData.users || [];
+                        const userStr = state.globalChat.users.map(u => `${u.icon} ${u.username}`).join(', ');
+                        await type(`Online Users: ${userStr}`, 10);
+                    }
+                } catch (e) {}
+
                 await type("Connected! Commands: /me [action], /whisper [user] [msg], @[tag]");
                 await type("Type 'exit' to leave.");
-                state.globalChat.lastId = data.last_id || -1;
-                state.globalChat.pollingInterval = setInterval(pollGlobalChat, 2000);
                 pollGlobalChat();
             } else {
                 let errorMsg = "Failed to join global chat.";
@@ -498,7 +510,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function leaveGlobalChat() {
-        if (state.globalChat.pollingInterval) clearInterval(state.globalChat.pollingInterval);
+        if (state.globalChat.pollingInterval) clearTimeout(state.globalChat.pollingInterval);
         tagDropdown.style.display = 'none';
         try {
             await fetch('/api/global/leave', {
@@ -527,6 +539,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (state.globalChat.tagging.active) updateTagDropdown();
             }
         } catch (e) { console.error(e); }
+        if (state.appState === 'global_chat') state.globalChat.pollingInterval = setTimeout(pollGlobalChat, 2000);
     }
 
     function renderGlobalMessage(msg) {
