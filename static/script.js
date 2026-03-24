@@ -9,10 +9,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     hiddenInput.style.opacity = '0';
     hiddenInput.style.position = 'fixed';
-    hiddenInput.style.top = '0';
+    hiddenInput.style.bottom = '0';
     hiddenInput.style.left = '0';
+    hiddenInput.style.height = '1px';
+    hiddenInput.style.width = '1px';
     hiddenInput.style.fontSize = '16px'; 
     hiddenInput.style.pointerEvents = 'none';
+    hiddenInput.setAttribute('autocorrect', 'off');
+    hiddenInput.setAttribute('autocapitalize', 'off');
+    hiddenInput.setAttribute('spellcheck', 'false');
+    hiddenInput.setAttribute('autocomplete', 'off');
+
+    inputLine.style.direction = 'ltr';
+    inputLine.style.textTransform = 'none';
+
     hiddenInput.addEventListener('input', () => {
         state.currentInput = hiddenInput.value;
         if (state.appState === 'login' && (state.subState === 'password' || state.subState === 'register_password')) {
